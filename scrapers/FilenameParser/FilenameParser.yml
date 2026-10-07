@@ -1,0 +1,10 @@
+name: Filename Parser
+# Builds title, date, studio, performers and tags from a scene's file path.
+# Performers/studios/tags are matched against your Stash library using the
+# same rules as the Auto Tag task. See README.md for configuration.
+sceneByFragment:
+  action: script
+  script:
+    - python
+    - FilenameParser.py
+# Last Updated October 07, 2026
