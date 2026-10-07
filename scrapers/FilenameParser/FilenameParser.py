@@ -127,6 +127,37 @@ def match_studio(library, text):
     return best
 
 
+_LEADING_BRACKET_RE = re.compile(r"^\s*\[([^\[\]]+)\]")
+
+
+def leading_bracket_studio(library, stem, performer_names):
+    """The studio named in a leading "[...]" of the filename, the usual place
+    for it ("[Studio] Title"). Returns (known studio or None, bracket text),
+    or (None, None) when there's no such bracket or it holds something else:
+    dates/quality markers ("[1080p]") or only performer names."""
+    m = _LEADING_BRACKET_RE.match(stem)
+    if not m:
+        return None, None
+    content = m[1].strip()
+    if not content:
+        return None, None
+    leftover = remove_spans(content, find_noise_spans(content) + [d.span for d in find_dates(content)])
+    if not re.search(r"[^\W_]", leftover) or is_name_block(content, performer_names):
+        return None, None
+    # The bracket must be the whole name, not just contain it ("[Example
+    # Studio Extra]" isn't "Example Studio"). Spacing and punctuation are
+    # ignored, so "[Alpha Beta Media]" matches "AlphaBeta Media".
+    wanted = _squash(content)
+    for studio in library.studios:
+        if any(_squash(n) == wanted for n in [studio.name] + studio.aliases):
+            return studio, content
+    return None, content
+
+
+def _squash(name):
+    return re.sub(r"[\W_]+", "", name).casefold()
+
+
 def match_tags(library, text):
     return [t for t in library.tags if any(find_name(n, text) for n in [t.name] + t.aliases)]
 
@@ -521,6 +552,20 @@ def scrape_path(path, library, options=None):
         result["tags"] = _unique(tags)
         return _to_output(result)
 
+    # A leading "[Studio]" beats Auto Tag's rightmost-match rule, and is used
+    # even when the studio isn't in Stash yet, so it can be created from the
+    # scrape dialog.
+    bracket_studio, bracket_text = leading_bracket_studio(library, stem, [p.name for p, _ in performers])
+    if bracket_studio:
+        studio_name = bracket_studio.name
+        studio_names = [bracket_text, bracket_studio.name] + bracket_studio.aliases
+    elif bracket_text:
+        studio_name, studio_names = bracket_text, [bracket_text]
+    elif studio:
+        studio_name, studio_names = studio.name, [studio.name] + studio.aliases
+    else:
+        studio_name, studio_names = None, []
+
     noise = find_noise_spans(stem)
     dates = [
         d for d in find_dates(stem, options["two_digit_year_order"])
@@ -532,15 +577,15 @@ def scrape_path(path, library, options=None):
         stem,
         noise + [d.span for d in dates],
         [p.name for p, _ in performers],
-        [studio.name] + studio.aliases if studio else [],
+        studio_names,
     )
 
     if title:
         result["title"] = title
     if date_value:
         result["date"] = date_value
-    if studio:
-        result["studio"] = studio.name
+    if studio_name:
+        result["studio"] = studio_name
     result["performers"] = _unique(p.name for p, _ in performers)
     if needs_review and options["review_tag"]:
         tags.append(options["review_tag"])

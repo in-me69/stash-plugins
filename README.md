@@ -23,6 +23,10 @@ Performers, studios and tags are matched the same way Stash's **Auto Tag** task 
 - Performers match on their primary name only. Auto Tag has performer alias matching turned off, and this scraper does the same.
 - When one performer's name only matches inside a longer matched name, the longer one wins. `Venus Afrodita` doesn't also match a performer called `Venus`, unless `Venus` also appears separately somewhere else in the path. This is one place where the scraper differs from Auto Tag, which would match both.
 - Studios and tags match on name or alias.
+- **A studio in a leading `[…]` takes priority.** For `[Alpha Beta Media] Diamond Collection 276 …`, the studio is `Alpha Beta Media`, even if another studio such as `Diamond Collection` matches further right. Auto Tag would pick the rightmost match.
+  - The bracket must match a studio's whole name or alias. Spacing and punctuation are ignored, so `[Alpha Beta Media]` matches `AlphaBeta Media`.
+  - If no studio in Stash matches, the bracket text is still returned as the studio, so you can create or link it from the scrape dialog.
+  - A leading bracket that holds only a date or quality marker (`[1080p]`), or only performer names, isn't treated as a studio.
 - Anything marked **Ignore auto tag** in Stash is skipped.
 
 The difference from Auto Tag is that this is a scraper. Results appear in Stash's scrape dialog for you to review before saving. It also works with the **Identify** task.
