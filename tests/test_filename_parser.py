@@ -1,9 +1,12 @@
 import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scrapers", "FilenameParser"))
 
+import FilenameParser  # noqa: E402
 from FilenameParser import (  # noqa: E402
     Entity, Library, choose_date, find_dates, find_name, scrape_path,
 )
@@ -188,6 +191,100 @@ class SeriesDatedNameTest(unittest.TestCase):
         result = scrape_path("/lib/[Other Site] 2020.05.06 Just A Title [WEBDL-480p, h264].mp4", LIBRARY)
         self.assertEqual(result["title"], "Just A Title")
         self.assertNotIn("performers", result)
+
+
+class ConfigTest(unittest.TestCase):
+    """Connection details are read from Stash's own config.yml when possible."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # Stash's usual layout: <config dir>/config.yml and <config dir>/scrapers/<scraper>/
+        self.config_dir = self.tmp.name
+        self.script_dir = os.path.join(self.config_dir, "scrapers", "FilenameParser")
+        os.makedirs(self.script_dir)
+        patches = [
+            mock.patch.object(FilenameParser, "SCRIPT_DIR", self.script_dir),
+            mock.patch.dict(os.environ, {"HOME": self.tmp.name}, clear=False),
+            mock.patch("os.path.expanduser", lambda p: p.replace("~", self.tmp.name)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        for key in ("STASH_URL", "STASH_API_KEY", "STASH_CONFIG_FILE"):
+            os.environ.pop(key, None)
+
+    def write(self, path, text):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def write_stash_config(self, extra=""):
+        self.write(
+            os.path.join(self.config_dir, "config.yml"),
+            "database: /data/stash-go.sqlite\njwt_secret_key: abc\napi_key: secret-key\n"
+            "port: 9998\nhost: 0.0.0.0\nstash:\n  - path: /media\n" + extra,
+        )
+
+    def test_reads_url_and_api_key_from_stash_config(self):
+        self.write_stash_config()
+        config = FilenameParser.load_config()
+        self.assertEqual(config["url"], "http://localhost:9998")
+        self.assertEqual(config["api_key"], "secret-key")
+
+    def test_https_when_stash_has_a_certificate(self):
+        self.write_stash_config()
+        self.write(os.path.join(self.config_dir, "stash.crt"), "")
+        self.write(os.path.join(self.config_dir, "stash.key"), "")
+        self.assertEqual(FilenameParser.load_config()["url"], "https://localhost:9998")
+
+    def test_config_ini_and_env_override_stash_config(self):
+        self.write_stash_config()
+        self.write(os.path.join(self.script_dir, "config.ini"), "[stash]\nurl = http://nas:9999\napi_key =\n[parser]\nreview_tag =\n")
+        config = FilenameParser.load_config()
+        self.assertEqual(config["url"], "http://nas:9999")
+        # url and api_key come from the same place: the local Stash's key is
+        # never sent to a different server.
+        self.assertEqual(config["api_key"], "")
+        self.assertEqual(config["review_tag"], "")  # empty still disables the tag
+        with mock.patch.dict(os.environ, {"STASH_API_KEY": "env-key"}):
+            self.assertEqual(FilenameParser.load_config()["api_key"], "env-key")
+
+    def write_py_common_config(self, folder, text):
+        directory = os.path.join(self.config_dir, "scrapers", *folder, "py_common")
+        os.makedirs(directory)
+        self.write(os.path.join(directory, "config.ini"), text)
+
+    def test_reuses_py_common_config(self):
+        self.write_stash_config()
+        self.write_py_common_config([], "# URL for your local Stash server\nurl = http://localhost:9999\napi_key = shared-key\n")
+        config = FilenameParser.load_config()
+        self.assertEqual((config["url"], config["api_key"]), ("http://localhost:9999", "shared-key"))
+
+    def test_finds_py_common_installed_by_scraper_manager(self):
+        self.write_py_common_config(["community"], "url = http://stash.lan:9999/\napi_key = shared-key\n")
+        config = FilenameParser.load_config()
+        self.assertEqual((config["url"], config["api_key"]), ("http://stash.lan:9999", "shared-key"))
+
+    def test_untouched_py_common_default_does_not_hide_stash_key(self):
+        self.write_stash_config()
+        self.write_py_common_config(["community"], "url = http://localhost:9999\napi_key =\n")
+        self.assertEqual(FilenameParser.load_config()["api_key"], "secret-key")
+
+    def test_own_config_ini_beats_py_common(self):
+        self.write_py_common_config([], "url = http://a:9999\napi_key = a-key\n")
+        self.write(os.path.join(self.script_dir, "config.ini"), "[stash]\nurl = http://b:9999\napi_key = b-key\n")
+        config = FilenameParser.load_config()
+        self.assertEqual((config["url"], config["api_key"]), ("http://b:9999", "b-key"))
+
+    def test_ignores_unrelated_config_yml(self):
+        self.write(os.path.join(self.config_dir, "config.yml"), "api_key: not-stash\nport: 1\n")
+        config = FilenameParser.load_config()
+        self.assertEqual(config["url"], "http://localhost:9999")
+        self.assertEqual(config["api_key"], "")
+
+    def test_defaults_without_any_config(self):
+        config = FilenameParser.load_config()
+        self.assertEqual((config["url"], config["api_key"]), ("http://localhost:9999", ""))
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ import configparser
 import json
 import os
 import re
+import ssl
 import sys
 import time
 import urllib.error
@@ -512,7 +513,11 @@ class Stash:
         if self.api_key:
             headers["ApiKey"] = self.api_key
         request = urllib.request.Request(self.endpoint, data=body, headers=headers)
-        with urllib.request.urlopen(request, timeout=60) as response:
+        context = None
+        if self.endpoint.startswith("https://localhost") or self.endpoint.startswith("https://127.0.0.1"):
+            # Stash's own HTTPS cert is usually self-signed; it's the local machine.
+            context = ssl._create_unverified_context()
+        with urllib.request.urlopen(request, timeout=60, context=context) as response:
             payload = json.load(response)
         if payload.get("errors"):
             raise RuntimeError(f"GraphQL error: {payload['errors']}")
@@ -574,15 +579,129 @@ def load_library(stash, ttl_seconds):
     )
 
 
+def find_stash_config():
+    """Locates Stash's own config.yml. Stash doesn't pass its address or API
+    key to scraper scripts, but the scrapers folder normally lives inside
+    Stash's config folder, so walking up from this script usually finds it."""
+    candidates = []
+    if os.environ.get("STASH_CONFIG_FILE"):
+        candidates.append(os.environ["STASH_CONFIG_FILE"])
+    directory = SCRIPT_DIR
+    for _ in range(4):
+        directory = os.path.dirname(directory)
+        candidates.append(os.path.join(directory, "config.yml"))
+    candidates.append(os.path.join(os.path.expanduser("~"), ".stash", "config.yml"))
+    candidates.append("/root/.stash/config.yml")  # the official Docker image
+    for path in candidates:
+        values = read_stash_config(path)
+        # Make sure it's Stash's config and not some other config.yml.
+        if values is not None and ("jwt_secret_key" in values or "database" in values):
+            return path, values
+    return None, None
+
+
+def read_stash_config(path):
+    """Reads the top-level "key: value" lines of a Stash config.yml. That's
+    all that's needed here, and it avoids depending on PyYAML."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    values = {}
+    for line in lines:
+        m = re.match(r"^([A-Za-z_]+):\s*(.*?)\s*$", line)
+        if m:
+            values[m[1]] = m[2].strip("\"'")
+    return values
+
+
+def stash_url_from_config(path, values):
+    host = values.get("host") or "localhost"
+    if host in ("0.0.0.0", "::", "[::]"):
+        host = "localhost"  # listening on all interfaces; reach it locally
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = values.get("port") or "9999"
+    config_dir = os.path.dirname(path)
+    has_cert = (values.get("ssl_cert_path") and values.get("ssl_key_path")) or (
+        os.path.exists(os.path.join(config_dir, "stash.crt"))
+        and os.path.exists(os.path.join(config_dir, "stash.key"))
+    )
+    return f"{'https' if has_cert else 'http'}://{host}:{port}"
+
+
+def find_py_common_config():
+    """Finds the config.ini of CommunityScrapers' shared py_common module, so
+    a Stash URL/API key already set there for other scrapers is reused here.
+    py_common is either a sibling of this scraper's folder or, when installed
+    through Stash's scraper manager, under a "community" folder next to it."""
+    directory = SCRIPT_DIR
+    for _ in range(3):
+        directory = os.path.dirname(directory)
+        for candidate in (
+            os.path.join(directory, "py_common", "config.ini"),
+            os.path.join(directory, "community", "py_common", "config.ini"),
+        ):
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
+def read_py_common_config(path):
+    """py_common's config.ini is plain "key = value" lines with no [section]
+    header, so configparser can't read it as-is."""
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"^\s*([A-Za-z_]+)\s*=\s*(.*?)\s*$", line)
+                if m:
+                    values[m[1]] = m[2]
+    except OSError:
+        pass
+    return values
+
+
 def load_config():
+    """Settings come from, highest priority first: STASH_URL/STASH_API_KEY
+    environment variables, config.ini next to this script, py_common's
+    config.ini, Stash's own config.yml (those two for url and api_key only),
+    then the built-in defaults."""
     parser = configparser.ConfigParser()
     parser.read(os.path.join(SCRIPT_DIR, "config.ini"), encoding="utf-8")
-    config = dict(DEFAULT_CONFIG)
+    ini = {}
     for section in ("stash", "parser"):
         if parser.has_section(section):
-            config.update({k: v.strip() for k, v in parser.items(section)})
-    config["url"] = os.environ.get("STASH_URL", config["url"])
-    config["api_key"] = os.environ.get("STASH_API_KEY", config["api_key"])
+            ini.update({k: v.strip() for k, v in parser.items(section)})
+
+    # Each source supplies url and api_key as a pair, so a key is never sent
+    # to a server it wasn't configured for. A source left at the defaults
+    # (like the config.ini py_common writes on first run) doesn't count, so it
+    # can't hide a real key further down the list.
+    sources = [
+        ("environment", {"url": os.environ.get("STASH_URL", ""), "api_key": os.environ.get("STASH_API_KEY", "")}),
+        ("config.ini", {"url": ini.get("url", ""), "api_key": ini.get("api_key", "")}),
+    ]
+    py_common_path = find_py_common_config()
+    if py_common_path:
+        sources.append((py_common_path, read_py_common_config(py_common_path)))
+    stash_path, stash_values = find_stash_config()
+    if stash_values is not None:
+        sources.append((stash_path, {
+            "url": stash_url_from_config(stash_path, stash_values),
+            "api_key": stash_values.get("api_key", ""),
+        }))
+
+    config = {**DEFAULT_CONFIG, **ini}
+    for name, values in sources:
+        url = (values.get("url") or "").rstrip("/")
+        if values.get("api_key") or (url and url != DEFAULT_CONFIG["url"]):
+            config["url"] = url or DEFAULT_CONFIG["url"]
+            config["api_key"] = values.get("api_key", "")
+            if name not in ("environment", "config.ini"):
+                log(f"Using Stash connection details from {name}")
+            break
     return config
 
 
@@ -611,5 +730,5 @@ if __name__ == "__main__":
     try:
         main()
     except (urllib.error.URLError, RuntimeError) as e:
-        log(f"Could not query Stash: {e}. Check url/api_key in config.ini.")
+        log(f"Could not query Stash: {e}. If Stash isn't on this machine at the default address, set url/api_key in config.ini.")
         print(json.dumps({}))

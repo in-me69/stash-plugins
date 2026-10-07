@@ -74,9 +74,23 @@ The scraper recognizes this filename format and parses it exactly:
 ### Install
 
 1. Copy `scrapers/FilenameParser/` into your Stash `scrapers` directory. This directory is next to Stash's `config.yml`, or set under **Settings > System > Scrapers Path**.
-2. Copy `config.example.ini` to `config.ini` in the same folder. Set `url` and, if Stash has a login, `api_key` (found under **Settings > Security**).
+2. If Stash has a login, make sure it has an API key: generate one under **Settings > Security** if you haven't already.
 3. In Stash, go to **Settings > Metadata Providers > Scrapers** and click **Reload scrapers**.
 4. Open a scene, click **Edit**, then **Scrape with… > Filename Parser**. To scrape in bulk, add **Filename Parser** as a source in the **Identify** task.
+
+#### Connecting to Stash
+
+Usually there's nothing to configure. Stash doesn't pass its address or API key to scraper scripts, so the scraper finds them itself. It uses the first of these that sets an API key or a non-default URL:
+
+1. The `STASH_URL` / `STASH_API_KEY` environment variables.
+2. This scraper's own `config.ini`.
+3. **py_common's `config.ini`**, if you use [CommunityScrapers](https://github.com/stashapp/CommunityScrapers). The URL and key you already set there for your other scrapers are reused. The scraper finds py_common next to its own folder or under `community/`, where Stash's scraper manager installs it. It only reads that file, so py_common's Python packages aren't needed.
+4. **Stash's own `config.yml`.** The scraper looks in the folders above it (Stash's default layout puts `scrapers/` next to `config.yml`), then in `~/.stash/` and `/root/.stash/` (the Docker image). It picks up the port, the API key and whether Stash uses HTTPS. You can also point it at the file with the `STASH_CONFIG_FILE` environment variable.
+5. `http://localhost:9999` with no API key.
+
+The URL and key always come from the same place, so a key is never sent to a server it wasn't set for. The Stash log shows which file was used.
+
+You only need this scraper's own `config.ini` if none of these work for you. For example, Stash runs on another machine and you don't use py_common. In that case, copy `config.example.ini` to `config.ini` and set `url` and `api_key`.
 
 The scraper uses only the Python standard library, so nothing needs to be installed with pip. It runs with whatever Python Stash is configured with (**Settings > System > Python executable path**).
 
@@ -84,12 +98,12 @@ The scraper needs to reach Stash's GraphQL API to read your performers, studios 
 
 ### Configuration
 
-All settings are documented in [`config.example.ini`](scrapers/FilenameParser/config.example.ini):
+`config.ini` is optional. All settings are documented in [`config.example.ini`](scrapers/FilenameParser/config.example.ini):
 
 | Setting | Default | What it does |
 |---|---|---|
-| `url` | `http://localhost:9999` | Stash address. Can be overridden by the `STASH_URL` environment variable. |
-| `api_key` | empty | Stash API key. Can be overridden by the `STASH_API_KEY` environment variable. |
+| `url` | detected (see above), else `http://localhost:9999` | Stash address. Can be overridden by the `STASH_URL` environment variable. |
+| `api_key` | detected (see above), else empty | Stash API key. Can be overridden by the `STASH_API_KEY` environment variable. |
 | `review_tag` | `Date Needs Review` | Tag added to scenes with ambiguous dates. Leave empty to disable it. |
 | `two_digit_year_order` | `auto` | `auto` treats dates like `23.04.15` as ambiguous. `ymd` always reads them as YY.MM.DD. |
 | `match_scope` | `path` | `path` matches across the full path, like Auto Tag. `filename` ignores folder names. |
