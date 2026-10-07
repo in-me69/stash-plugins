@@ -50,6 +50,22 @@ class NameMatchingTest(unittest.TestCase):
         result = scrape_path("/v/Ally S in the park.mp4", LIBRARY)
         self.assertEqual(names(result, "performers"), [])
 
+    def test_longer_performer_name_wins_over_one_inside_it(self):
+        library = Library(
+            performers=[Entity("Venus"), Entity("Venus Afrodita"), Entity("Candela X")],
+            studios=[Entity("ADPTube")],
+            tags=[],
+        )
+        result = scrape_path(
+            "/v/[ADPTube] Lesbian Venus Afrodita and Candela X (2023) [1080p].mp4", library
+        )
+        self.assertEqual(names(result, "performers"), ["Venus Afrodita", "Candela X"])
+        self.assertEqual(result["studio"], {"name": "ADPTube"})
+        self.assertEqual(result["date"], "2023")
+        # The shorter name still counts when it also appears on its own.
+        result = scrape_path("/v/Venus Afrodita - Venus Again.mp4", library)
+        self.assertEqual(names(result, "performers"), ["Venus Afrodita", "Venus"])
+
     def test_studio_rightmost_match_wins_and_aliases_count(self):
         result = scrape_path("/v/Other Site/ExStudio - A Title.mp4", LIBRARY)
         self.assertEqual(result["studio"], {"name": "Example Studio"})

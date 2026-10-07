@@ -89,14 +89,31 @@ class Library:
 
 
 def match_performers(library, text):
-    """Performers whose primary name appears in text, with their spans."""
+    """Performers whose primary name appears in text, with their spans.
+
+    Where one matched name sits inside a longer one ("Venus" inside "Venus
+    Afrodita"), the longer one wins: the shorter name only counts if it also
+    appears on its own somewhere else. Auto Tag itself returns both."""
     matched = []
     for p in library.performers:
         spans = find_name(p.name, text)
         if spans:
             matched.append((p, spans))
+    all_spans = [span for _, spans in matched for span in spans]
+
+    def inside_longer(span):
+        return any(
+            s <= span[0] and span[1] <= e and (e - s) > (span[1] - span[0])
+            for s, e in all_spans
+        )
+
+    kept = []
+    for p, spans in matched:
+        spans = [span for span in spans if not inside_longer(span)]
+        if spans:
+            kept.append((p, spans))
     # Order by first appearance, so "Alice & Bob" lists Alice first.
-    return sorted(matched, key=lambda m: m[1][0][0])
+    return sorted(kept, key=lambda m: m[1][0][0])
 
 
 def match_studio(library, text):

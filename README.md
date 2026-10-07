@@ -21,6 +21,7 @@ Performers, studios and tags are matched the same way Stash's **Auto Tag** task 
 - A space in a name matches `.`, `-`, `_`, a space, or nothing in the path. So `Alice Smith` matches `Alice.Smith`, `alice_smith` and `AliceSmith`.
 - A name only matches as a whole word. `Carol` doesn't match `Caroline`.
 - Performers match on their primary name only. Auto Tag has performer alias matching turned off, and this scraper does the same.
+- When one performer's name only matches inside a longer matched name, the longer one wins. `Venus Afrodita` doesn't also match a performer called `Venus`, unless `Venus` also appears separately somewhere else in the path. This is one place where the scraper differs from Auto Tag, which would match both.
 - Studios and tags match on name or alias.
 - Anything marked **Ignore auto tag** in Stash is skipped.
 
