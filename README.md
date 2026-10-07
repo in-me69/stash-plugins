@@ -42,18 +42,36 @@ Stash supports year-only and year-month dates.
 
 ### Title cleanup
 
-The scraper removes the following from the filename and uses what's left as the title:
+The scraper removes the following from the filename:
 
 - dates
 - resolution and quality markers: `1080p`, `4K`, `1920x1080`, `HDR`, `60fps`
 - codecs: `x264`, `HEVC`, `AV1`, `10bit`, `AAC`
 - source markers: `WEB-DL`, `BluRay`, `XXX`, `MP4`
 - trailing release-group suffixes like `-GRP`
-- names of matched performers and studios
 
-After that it removes empty or unmatched brackets, leftover joiners such as `&`, `and`, `with` or `feat.`, and duplicate separators.
+**Performer and studio names are only removed when they're set apart from the title.** The filename is split into segments at clear separators:
 
-Tag names are **not** removed from the title, because words like "Beach" are often part of the real title.
+- ` - ` (or `–`, `—`, `|`) with spaces on both sides
+- anything in brackets: `[…]`, `(…)` or `{…}`
+- the place where a date or quality marker was removed
+
+A segment is dropped only if it contains nothing but matched performer or studio names, plus joining words or symbols (`,` `&` `+` `/` `and` `with` `feat.` `ft.` `vs` `x`). Names that are part of the title are left alone.
+
+| Filename | Title |
+|---|---|
+| `[Studio] Alice, Bob - Pool Day` | `Pool Day` |
+| `[Studio] Pool Day - Alice & Bob` | `Pool Day` |
+| `Pool Day (Alice Smith) 1080p` | `Pool Day` |
+| `Dinner with Alice Smith` | `Dinner with Alice Smith` |
+| `Studio.2023.04.15.Alice.Smith.Pool.Day` | `Alice Smith Pool Day` (nothing separates the name from the title) |
+| `Pool Day - Alice, Zed` (Zed not in Stash) | `Pool Day - Alice, Zed` |
+
+Performers and studios are still returned whether or not their names were removed from the title.
+
+Tag names are never removed from the title, because words like "Beach" are often part of the real title.
+
+After that, the scraper removes empty or unmatched brackets, duplicate separators, and stray punctuation at either end of the title. Words like "with" or "and" are only removed as part of a dropped name segment, never from the title itself.
 
 If the filename uses dots or underscores between words (`Some.Scene.Name`), these become spaces. If removing names would leave nothing, the title keeps the names.
 

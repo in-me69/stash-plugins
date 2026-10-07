@@ -118,7 +118,9 @@ class GenericScrapeTest(unittest.TestCase):
         result = scrape_path(
             "/dl/ExStudio.2022.11.03.Alice.Smith.A.Long.Afternoon.XXX.2160p.HEVC.MP4-GRP.mkv", LIBRARY
         )
-        self.assertEqual(result["title"], "A Long Afternoon")
+        # Nothing separates the performer from the title, so the name stays.
+        # The studio is set apart by the date, so it's dropped.
+        self.assertEqual(result["title"], "Alice Smith A Long Afternoon")
         self.assertEqual(result["date"], "2022-11-03")
         self.assertEqual(result["studio"], {"name": "Example Studio"})
         self.assertEqual(names(result, "performers"), ["Alice Smith"])
@@ -139,6 +141,35 @@ class GenericScrapeTest(unittest.TestCase):
         result = scrape_path("/v/Fun Times (Alice Smith, Carol) [] {HD} - with Dee Dee.mp4", LIBRARY)
         self.assertEqual(result["title"], "Fun Times")
         self.assertEqual(names(result, "performers"), ["Alice Smith", "Carol", "Dee Dee"])
+
+    def test_performer_block_before_title(self):
+        result = scrape_path("/v/[Other Site] Alice Smith, Bob Jones - Pool Day.mp4", LIBRARY)
+        self.assertEqual(result["title"], "Pool Day")
+        self.assertEqual(names(result, "performers"), ["Alice Smith", "Bob Jones"])
+
+    def test_performer_block_after_title(self):
+        result = scrape_path("/v/[Other Site] Pool Day - Alice Smith, Bob Jones.mp4", LIBRARY)
+        self.assertEqual(result["title"], "Pool Day")
+
+    def test_names_inside_the_title_are_kept(self):
+        for name, title in [
+            ("Dinner with Alice Smith.mp4", "Dinner with Alice Smith"),
+            ("[Other Site] Carol's Big Day - Bob Jones.mp4", "Carol's Big Day"),
+            ("Alice Smith Goes To Other Site.mp4", "Alice Smith Goes To Other Site"),
+        ]:
+            result = scrape_path("/v/" + name, LIBRARY)
+            self.assertEqual(result["title"], title, name)
+        # ...though they're still picked up as performers/studio.
+        self.assertEqual(names(scrape_path("/v/Dinner with Alice Smith.mp4", LIBRARY), "performers"), ["Alice Smith"])
+
+    def test_block_with_unknown_name_is_kept(self):
+        # "Zed" isn't a known performer, so this isn't purely a name block.
+        result = scrape_path("/v/Pool Day - Alice Smith, Zed.mp4", LIBRARY)
+        self.assertEqual(result["title"], "Pool Day - Alice Smith, Zed")
+
+    def test_joining_words_kept_at_title_edges(self):
+        for name in ("Playing With", "With Love", "Rock And", "Featuring", "Me vs"):
+            self.assertEqual(scrape_path(f"/v/{name}.mp4", LIBRARY)["title"], name)
 
     def test_title_falls_back_when_only_names_remain(self):
         result = scrape_path("/v/Alice Smith 1080p.mp4", LIBRARY)

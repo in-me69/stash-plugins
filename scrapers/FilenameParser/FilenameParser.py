@@ -297,16 +297,23 @@ def choose_date(candidates):
 
 _BRACKETS = {"(": ")", "[": "]", "{": "}"}
 _EMPTY_BRACKETS_RE = re.compile(r"[(\[{][\s\-–—,.&+_:;|]*[)\]}]")
-_JOINER_WORDS = r"(?:and|with|feat\.?|ft\.?|featuring|vs\.?)"
-_EDGE_RE = re.compile(
-    r"^(?:[\s\-–—,.&+_:;|]|" + _JOINER_WORDS + r"(?=[\s\-–—,.&+_:;|]|$))+"
-    r"|(?:(?<=[\s\-–—,&+_:;|])" + _JOINER_WORDS + r"|[\s\-–—,.&+_:;|])+$",
+_EDGE_RE = re.compile(r"^[\s\-–—,.&+_:;|]+|[\s\-–—,&+_:;|]+$")
+# Words and symbols that can join names inside a block of names, e.g.
+# "Alice, Bob & Carol" or "Alice feat. Bob". A "+3" from a truncated list too.
+_NAME_JOINERS_RE = re.compile(
+    _BOUNDARY_BEFORE + r"(?:and|with|feat\.?|ft\.?|featuring|vs\.?|x)" + _BOUNDARY_AFTER
+    + r"|\+\d+|[,&+/]",
     re.IGNORECASE,
 )
+# Marks where a date or noise token was removed: also a segment boundary.
+_GAP = "\x00"
+# Boundaries between title segments: a removed date/noise token, a dash or
+# pipe with whitespace on both sides, or a bracketed group (its own segment).
+_SEGMENT_BOUNDARY_RE = re.compile(_GAP + r"+|\s+[\-–—|]+\s+|[(\[{][^()\[\]{}]*[)\]}]")
 _SEPARATOR_RUN_RE = re.compile(r"(?:\s*[\-–—,&+|:;]\s*){2,}")
 
 
-def remove_spans(text, spans):
+def remove_spans(text, spans, joiner=" "):
     spans = sorted(spans)
     out, pos = [], 0
     for start, end in spans:
@@ -314,8 +321,56 @@ def remove_spans(text, spans):
             out.append(text[pos:start])
         pos = max(pos, end)
     out.append(text[pos:])
-    # Join with a space so removing a token never glues its neighbours together.
-    return " ".join(out)
+    # Join with a space (by default) so removing a token never glues its
+    # neighbours together.
+    return joiner.join(out)
+
+
+def title_segments(text):
+    """Splits text at clear separators, returning (content span, span to
+    delete) per non-empty segment. A bracketed segment's delete span includes
+    its brackets."""
+    segments, pos = [], 0
+    for m in _SEGMENT_BOUNDARY_RE.finditer(text):
+        segments.append(((pos, m.start()), (pos, m.start())))
+        if m.group(0)[0] in "([{":
+            segments.append(((m.start() + 1, m.end() - 1), m.span()))
+        pos = m.end()
+    segments.append(((pos, len(text)), (pos, len(text))))
+    return [(c, d) for c, d in segments if text[c[0]:c[1]].strip()]
+
+
+def is_name_block(segment, names):
+    """True if segment is nothing but the given names and joining words."""
+    spans = [span for name in names for span in find_name(name, segment)]
+    if not spans:
+        return False
+    rest = _NAME_JOINERS_RE.sub(" ", remove_spans(segment, spans))
+    return not re.search(r"[^\W_]", rest)
+
+
+def build_title(stem, removed_spans, performer_names, studio_names):
+    """The filename minus dates/noise, with any segment that is only
+    performer/studio names dropped. Names inside the title itself are kept:
+    they're only removed when set apart by a clear separator, e.g.
+    "[Studio] Alice, Bob - Title" or "Title - Alice & Bob"."""
+    text = remove_spans(stem, removed_spans, joiner=_GAP)
+    if is_dotted(stem):
+        text = text.replace(".", " ")
+    text = text.replace("_", " ")
+    segments = title_segments(text)
+
+    def without(names):
+        drop = [d for c, d in segments if is_name_block(text[c[0]:c[1]], names)]
+        return clean_title(remove_spans(text, drop).replace(_GAP, " "))
+
+    # Prefer dropping performer and studio blocks; if that leaves nothing (the
+    # filename is only names), try dropping just the studio, then nothing.
+    return (
+        without(performer_names + studio_names)
+        or without(studio_names)
+        or clean_title(text.replace(_GAP, " "))
+    )
 
 
 def _remove_unbalanced_brackets(text):
@@ -341,10 +396,7 @@ def _collapse_separator_run(m):
     return f"{stripped[0]} " if stripped else " "
 
 
-def clean_title(text, dotted):
-    if dotted:
-        text = text.replace(".", " ")
-    text = text.replace("_", " ")
+def clean_title(text):
     previous = None
     while previous != text:
         previous = text
@@ -432,7 +484,6 @@ def scrape_path(path, library, options=None):
         stem = basename
     full = path[: len(path) - len(basename)] + stem
     match_text = full if options["match_scope"] == "path" else stem
-    offset = len(match_text) - len(stem)  # where the basename starts within match_text
 
     performers = match_performers(library, match_text)
     studio = match_studio(library, match_text)
@@ -460,19 +511,12 @@ def scrape_path(path, library, options=None):
     ]
     date_value, needs_review = choose_date(dates)
 
-    name_spans = []
-    for _, spans in performers:
-        name_spans += [(s - offset, e - offset) for s, e in spans if s >= offset]
-    if studio:
-        for candidate in [studio.name] + studio.aliases:
-            name_spans += find_name(candidate, stem)
-
-    base_spans = noise + [d.span for d in dates]
-    dotted = is_dotted(stem)
-    title = clean_title(remove_spans(stem, base_spans + name_spans), dotted)
-    if not title:
-        # Everything was a name; better a title with names in it than none.
-        title = clean_title(remove_spans(stem, base_spans), dotted)
+    title = build_title(
+        stem,
+        noise + [d.span for d in dates],
+        [p.name for p, _ in performers],
+        [studio.name] + studio.aliases if studio else [],
+    )
 
     if title:
         result["title"] = title
