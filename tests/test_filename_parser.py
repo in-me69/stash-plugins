@@ -97,6 +97,28 @@ class NameMatchingTest(unittest.TestCase):
         self.assertNotIn("studio", result)
         self.assertEqual(names(result, "performers"), ["Alice Smith"])
 
+    def test_names_inside_the_studio_name_are_ignored(self):
+        library = Library(
+            performers=[Entity("Star"), Entity("Alice Smith")],
+            studios=[Entity("Other Site")],
+            tags=[Entity("California"), Entity("Revenge")],
+        )
+        result = scrape_path("/v/[California Star Productions] Girlfriends Revenge (2019) [480p].mp4", library)
+        self.assertEqual(result["studio"], {"name": "California Star Productions"})
+        self.assertNotIn("performers", result)
+        self.assertEqual(names(result, "tags"), ["Revenge"])
+        self.assertEqual(result["title"], "Girlfriends Revenge")
+        # Also when the studio is a known one matched in a folder name...
+        library.studios.append(Entity("California Star Productions"))
+        result = scrape_path("/v/California Star Productions/Girlfriends Revenge.mp4", library)
+        self.assertNotIn("performers", result)
+        # ...or the series in a series-dated filename.
+        result = scrape_path("/v/[California Star Productions] 2019.01.02 Revenge - Alice Smith.mp4", library)
+        self.assertEqual(names(result, "performers"), ["Alice Smith"])
+        # A name that also appears outside the studio name still counts.
+        result = scrape_path("/v/[California Star Productions] Star Is Born.mp4", library)
+        self.assertEqual(names(result, "performers"), ["Star"])
+
     def test_tags_match_name_or_alias_across_path(self):
         result = scrape_path("/v/Outside/Fun at the Beach.mp4", LIBRARY)
         self.assertEqual(sorted(names(result, "tags")), ["Beach", "Outdoor"])
@@ -265,6 +287,24 @@ class SeriesDatedNameTest(unittest.TestCase):
         result = scrape_path("/lib/[Other Site] 2020.05.06 Just A Title [WEBDL-480p, h264].mp4", LIBRARY)
         self.assertEqual(result["title"], "Just A Title")
         self.assertNotIn("performers", result)
+
+
+class LogTest(unittest.TestCase):
+    def test_lines_carry_stash_log_level(self):
+        import io
+        from contextlib import redirect_stderr
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            FilenameParser.log("hello")
+            FilenameParser.log("uh oh\nsecond line", "warning")
+        self.assertEqual(
+            buffer.getvalue().splitlines(),
+            [
+                "\x01i\x02[FilenameParser] hello",
+                "\x01w\x02[FilenameParser] uh oh",
+                "\x01w\x02[FilenameParser] second line",
+            ],
+        )
 
 
 class ConfigTest(unittest.TestCase):

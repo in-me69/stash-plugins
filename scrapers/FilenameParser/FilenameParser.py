@@ -47,9 +47,13 @@ DEFAULT_CONFIG = {
 }
 
 
-def log(message):
-    # Stash shows a script scraper's stderr in its log; stdout is the result.
-    print(f"[FilenameParser] {message}", file=sys.stderr)
+def log(message, level="info"):
+    """Writes to Stash's log. A script scraper's stderr goes to the log, with
+    the level given by a "\\x01<level>\\x02" prefix: without it Stash records
+    every line as an error. Levels: trace, debug, info, warning, error."""
+    prefix = f"\x01{level[0]}\x02"
+    for line in str(message).splitlines() or [""]:
+        print(f"{prefix}[FilenameParser] {line}", file=sys.stderr, flush=True)
 
 
 # --- Auto Tag-compatible name matching -----------------------------------
@@ -159,7 +163,26 @@ def _squash(name):
 
 
 def match_tags(library, text):
-    return [t for t in library.tags if any(find_name(n, text) for n in [t.name] + t.aliases)]
+    """Tags whose name or alias appears in text, with their spans."""
+    matched = []
+    for t in library.tags:
+        spans = [span for n in [t.name] + t.aliases for span in find_name(n, text)]
+        if spans:
+            matched.append((t, spans))
+    return matched
+
+
+def outside_studio(matches, text, studio_names):
+    """Drops matches found only inside the studio's name, e.g. a performer
+    "Star" within "[California Star Productions]". A match still counts if it
+    also appears somewhere else in the path."""
+    blocked = [span for n in studio_names for span in find_name(n, text)]
+    kept = []
+    for entity, spans in matches:
+        spans = [sp for sp in spans if not any(s <= sp[0] and sp[1] <= e for s, e in blocked)]
+        if spans:
+            kept.append((entity, spans))
+    return kept
 
 
 def lookup_entity(entities, name, use_aliases=True):
@@ -535,15 +558,37 @@ def scrape_path(path, library, options=None):
 
     performers = match_performers(library, match_text)
     studio = match_studio(library, match_text)
-    tags = [t.name for t in match_tags(library, match_text)]
+    tags = match_tags(library, match_text)
     result = {}
-
     series_name = parse_series_name(stem, library)
+
+    # Work out the studio first: performers and tags found only inside its
+    # name don't count.
+    if series_name:
+        known = lookup_entity(library.studios, series_name.series)
+        studio_name = known.name if known else series_name.series
+        studio_names = [series_name.series] + ([known.name] + known.aliases if known else [])
+    else:
+        # A leading "[Studio]" beats Auto Tag's rightmost-match rule, and is
+        # used even when the studio isn't in Stash yet, so it can be created
+        # from the scrape dialog.
+        bracket_studio, bracket_text = leading_bracket_studio(library, stem, [p.name for p, _ in performers])
+        if bracket_studio:
+            studio_name = bracket_studio.name
+            studio_names = [bracket_text, bracket_studio.name] + bracket_studio.aliases
+        elif bracket_text:
+            studio_name, studio_names = bracket_text, [bracket_text]
+        elif studio:
+            studio_name, studio_names = studio.name, [studio.name] + studio.aliases
+        else:
+            studio_name, studio_names = None, []
+    performers = outside_studio(performers, match_text, studio_names)
+    tags = [t.name for t, _ in outside_studio(tags, match_text, studio_names)]
+
     if series_name:
         result["title"] = series_name.title
         result["date"] = series_name.date
-        known = lookup_entity(library.studios, series_name.series)
-        result["studio"] = known.name if known else series_name.series
+        result["studio"] = studio_name
         names = []
         for n in series_name.performers:
             known = lookup_entity(library.performers, n)
@@ -551,20 +596,6 @@ def scrape_path(path, library, options=None):
         result["performers"] = _unique(names + [p.name for p, _ in performers])
         result["tags"] = _unique(tags)
         return _to_output(result)
-
-    # A leading "[Studio]" beats Auto Tag's rightmost-match rule, and is used
-    # even when the studio isn't in Stash yet, so it can be created from the
-    # scrape dialog.
-    bracket_studio, bracket_text = leading_bracket_studio(library, stem, [p.name for p, _ in performers])
-    if bracket_studio:
-        studio_name = bracket_studio.name
-        studio_names = [bracket_text, bracket_studio.name] + bracket_studio.aliases
-    elif bracket_text:
-        studio_name, studio_names = bracket_text, [bracket_text]
-    elif studio:
-        studio_name, studio_names = studio.name, [studio.name] + studio.aliases
-    else:
-        studio_name, studio_names = None, []
 
     noise = find_noise_spans(stem)
     dates = [
@@ -677,7 +708,7 @@ def load_library(stash, ttl_seconds):
                 with open(cache_path, "w", encoding="utf-8") as f:
                     json.dump(raw, f)
             except OSError as e:
-                log(f"Could not write library cache: {e}")
+                log(f"Could not write library cache: {e}", "warning")
     return Library(
         performers=[Entity(**p) for p in raw["performers"]],
         studios=[Entity(**s) for s in raw["studios"]],
@@ -806,7 +837,7 @@ def load_config():
             config["url"] = url or DEFAULT_CONFIG["url"]
             config["api_key"] = values.get("api_key", "")
             if name not in ("environment", "config.ini"):
-                log(f"Using Stash connection details from {name}")
+                log(f"Using Stash connection details from {name}", "debug")
             break
     return config
 
@@ -822,7 +853,7 @@ def main():
         # Older Stash versions don't include files in the scraper input.
         path = stash.scene_path(fragment["id"])
     if not path:
-        log("Scene has no file path to parse")
+        log("Scene has no file path to parse", "warning")
         print(json.dumps({}))
         return
 
@@ -836,5 +867,5 @@ if __name__ == "__main__":
     try:
         main()
     except (urllib.error.URLError, RuntimeError) as e:
-        log(f"Could not query Stash: {e}. If Stash isn't on this machine at the default address, set url/api_key in config.ini.")
+        log(f"Could not query Stash: {e}. If Stash isn't on this machine at the default address, set url/api_key in config.ini.", "error")
         print(json.dumps({}))
