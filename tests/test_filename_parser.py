@@ -70,6 +70,33 @@ class NameMatchingTest(unittest.TestCase):
         result = scrape_path("/v/Other Site/ExStudio - A Title.mp4", LIBRARY)
         self.assertEqual(result["studio"], {"name": "Example Studio"})
 
+    def test_leading_bracket_studio(self):
+        name = "/v/[Alpha Beta Media] Diamond Collection 276 - Ladies Only (2020) [1080p].mp4"
+        for studios in (
+            [Entity("Alpha Beta Media")],
+            # A studio matching further right no longer wins over the bracket.
+            [Entity("Alpha Beta Media"), Entity("Diamond Collection")],
+            # Matched by alias, separators aside.
+            [Entity("ABM", ["AlphaBeta Media"])],
+        ):
+            result = scrape_path(name, Library([], studios, []))
+            self.assertEqual(result["studio"], {"name": studios[0].name}, studios)
+            self.assertEqual(result["title"], "Diamond Collection 276 - Ladies Only")
+            self.assertEqual(result["date"], "2020")
+
+    def test_unknown_leading_bracket_studio_is_returned_as_new(self):
+        result = scrape_path("/v/[Alpha Beta Media] Ladies Only.mp4", Library([], [], []))
+        self.assertEqual(result["studio"], {"name": "Alpha Beta Media"})
+        self.assertEqual(result["title"], "Ladies Only")
+
+    def test_leading_bracket_that_is_not_a_studio(self):
+        result = scrape_path("/v/[1080p] Ladies Only (2020).mp4", LIBRARY)
+        self.assertNotIn("studio", result)
+        self.assertEqual(result["title"], "Ladies Only")
+        result = scrape_path("/v/[Alice Smith] Ladies Only.mp4", LIBRARY)
+        self.assertNotIn("studio", result)
+        self.assertEqual(names(result, "performers"), ["Alice Smith"])
+
     def test_tags_match_name_or_alias_across_path(self):
         result = scrape_path("/v/Outside/Fun at the Beach.mp4", LIBRARY)
         self.assertEqual(sorted(names(result, "tags")), ["Beach", "Outdoor"])
