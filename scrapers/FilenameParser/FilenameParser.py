@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     "review_tag": "Date Needs Review",
     "two_digit_year_order": "auto",
     "match_scope": "path",
+    "match_performer_aliases": "true",
     "cache_ttl_seconds": "300",
 }
 
@@ -92,17 +93,32 @@ class Library:
     tags: list
 
 
-def match_performers(library, text):
-    """Performers whose primary name appears in text, with their spans.
+# Aliases this short ("BB", "J") would match ordinary words all over the
+# place, so they're never matched on their own.
+_MIN_ALIAS_CHARS = 3
+
+
+def performer_names(performer, use_aliases=True):
+    """The names a performer is matched by: their primary name, plus aliases
+    of at least _MIN_ALIAS_CHARS letters/digits when use_aliases is set."""
+    names = [performer.name]
+    if use_aliases:
+        names += [a for a in performer.aliases if len(_squash(a)) >= _MIN_ALIAS_CHARS]
+    return names
+
+
+def match_performers(library, text, use_aliases=True):
+    """Performers whose name (or alias, if use_aliases) appears in text, with
+    their spans.
 
     Where one matched name sits inside a longer one ("Venus" inside "Venus
     Afrodita"), the longer one wins: the shorter name only counts if it also
     appears on its own somewhere else. Auto Tag itself returns both."""
     matched = []
     for p in library.performers:
-        spans = find_name(p.name, text)
+        spans = [span for n in performer_names(p, use_aliases) for span in find_name(n, text)]
         if spans:
-            matched.append((p, spans))
+            matched.append((p, sorted(set(spans))))
     all_spans = [span for _, spans in matched for span in spans]
 
     def inside_longer(span):
@@ -146,15 +162,19 @@ def leading_bracket_studio(library, stem, performer_names):
     if not content:
         return None, None
     leftover = remove_spans(content, find_noise_spans(content) + [d.span for d in find_dates(content)])
-    if not re.search(r"[^\W_]", leftover) or is_name_block(content, performer_names):
+    if not re.search(r"[^\W_]", leftover):
         return None, None
     # The bracket must be the whole name, not just contain it ("[Example
     # Studio Extra]" isn't "Example Studio"). Spacing and punctuation are
-    # ignored, so "[Alpha Beta Media]" matches "AlphaBeta Media".
+    # ignored, so "[Alpha Beta Media]" matches "AlphaBeta Media". A known
+    # studio wins even if a performer has the same name: performers who
+    # release their own content often have a studio named after them.
     wanted = _squash(content)
     for studio in library.studios:
         if any(_squash(n) == wanted for n in [studio.name] + studio.aliases):
             return studio, content
+    if is_name_block(content, performer_names):
+        return None, None
     return None, content
 
 
@@ -175,11 +195,17 @@ def match_tags(library, text):
 def outside_studio(matches, text, studio_names):
     """Drops matches found only inside the studio's name, e.g. a performer
     "Star" within "[California Star Productions]". A match still counts if it
-    also appears somewhere else in the path."""
+    also appears somewhere else in the path, or if it's the studio's whole
+    name: a performer releasing their own content often has a studio of the
+    same name, and then both apply."""
     blocked = [span for n in studio_names for span in find_name(n, text)]
+
+    def inside(sp):
+        return any(s <= sp[0] and sp[1] <= e and (e - s) > (sp[1] - sp[0]) for s, e in blocked)
+
     kept = []
     for entity, spans in matches:
-        spans = [sp for sp in spans if not any(s <= sp[0] and sp[1] <= e for s, e in blocked)]
+        spans = [sp for sp in spans if not inside(sp)]
         if spans:
             kept.append((entity, spans))
     return kept
@@ -425,14 +451,18 @@ def build_title(stem, removed_spans, performer_names, studio_names):
     performer/studio names dropped. Names inside the title itself are kept:
     they're only removed when set apart by a clear separator, e.g.
     "[Studio] Alice, Bob - Title" or "Title - Alice & Bob"."""
-    text = remove_spans(stem, removed_spans, joiner=_GAP)
-    if is_dotted(stem):
-        text = text.replace(".", " ")
+    original = remove_spans(stem, removed_spans, joiner=_GAP)
+    # Dots/underscores used as word separators become spaces in the title.
+    # Each is replaced one-for-one, so positions in `text` and `original`
+    # line up: segments are found in `text` (where "Title.-.Alice" has its
+    # " - "), but names are matched in `original`, so a name like
+    # "bougie_bb" still matches itself.
+    text = original.replace(".", " ") if is_dotted(stem) else original
     text = text.replace("_", " ")
     segments = title_segments(text)
 
     def without(names):
-        drop = [d for c, d in segments if is_name_block(text[c[0]:c[1]], names)]
+        drop = [d for c, d in segments if is_name_block(original[c[0]:c[1]], names)]
         return clean_title(remove_spans(text, drop).replace(_GAP, " "))
 
     # Prefer dropping performer and studio blocks; if that leaves nothing (the
@@ -556,7 +586,8 @@ def scrape_path(path, library, options=None):
     full = path[: len(path) - len(basename)] + stem
     match_text = full if options["match_scope"] == "path" else stem
 
-    performers = match_performers(library, match_text)
+    use_aliases = str(options["match_performer_aliases"]).strip().lower() not in ("false", "no", "0", "off")
+    performers = match_performers(library, match_text, use_aliases)
     studio = match_studio(library, match_text)
     tags = match_tags(library, match_text)
     result = {}
@@ -572,7 +603,9 @@ def scrape_path(path, library, options=None):
         # A leading "[Studio]" beats Auto Tag's rightmost-match rule, and is
         # used even when the studio isn't in Stash yet, so it can be created
         # from the scrape dialog.
-        bracket_studio, bracket_text = leading_bracket_studio(library, stem, [p.name for p, _ in performers])
+        bracket_studio, bracket_text = leading_bracket_studio(
+            library, stem, [n for p, _ in performers for n in performer_names(p, use_aliases)]
+        )
         if bracket_studio:
             studio_name = bracket_studio.name
             studio_names = [bracket_text, bracket_studio.name] + bracket_studio.aliases
@@ -607,7 +640,7 @@ def scrape_path(path, library, options=None):
     title = build_title(
         stem,
         noise + [d.span for d in dates],
-        [p.name for p, _ in performers],
+        [n for p, _ in performers for n in performer_names(p, use_aliases)],
         studio_names,
     )
 

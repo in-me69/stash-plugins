@@ -20,10 +20,10 @@ Performers, studios and tags are matched the same way Stash's **Auto Tag** task 
 
 - A space in a name matches `.`, `-`, `_`, a space, or nothing in the path. So `Alice Smith` matches `Alice.Smith`, `alice_smith` and `AliceSmith`.
 - A name only matches as a whole word. `Carol` doesn't match `Caroline`.
-- Performers match on their primary name only. Auto Tag has performer alias matching turned off, and this scraper does the same.
+- Performers match on their primary name **and their aliases**. This differs from Auto Tag, which only uses primary names. Aliases shorter than 3 letters or digits, like `BB`, are never matched on their own, because they'd match ordinary words. Set `match_performer_aliases = false` to match primary names only. Names are matched against the filename exactly as written, so an alias like `bougie_bb` matches `bougie_bb`.
 - When one performer's name only matches inside a longer matched name, the longer one wins. `Venus Afrodita` doesn't also match a performer called `Venus`, unless `Venus` also appears separately somewhere else in the path. This is one place where the scraper differs from Auto Tag, which would match both.
 - Studios and tags match on name or alias.
-- **Performer and tag names inside the studio's name don't count.** In `[California Star Productions] Girlfriends Revenge`, a performer called `Star` isn't matched. The same applies when the studio name appears in a folder name or is the series in a series-dated filename. A name that also appears separately elsewhere in the path still counts.
+- **Performer and tag names inside the studio's name don't count.** In `[California Star Productions] Girlfriends Revenge`, a performer called `Star` isn't matched. The same applies when the studio name appears in a folder name or is the series in a series-dated filename. A name that also appears separately elsewhere in the path still counts. So does a performer whose name *is* the whole studio name: performers who release their own content often have a studio named after them, so `[Bougie BB] Pool Day` gets both the studio and the performer `Bougie BB`.
 - **A studio in a leading `[…]` takes priority.** For `[Alpha Beta Media] Diamond Collection 276 …`, the studio is `Alpha Beta Media`, even if another studio such as `Diamond Collection` matches further right. Auto Tag would pick the rightmost match.
   - The bracket must match a studio's whole name or alias. Spacing and punctuation are ignored, so `[Alpha Beta Media]` matches `AlphaBeta Media`.
   - If no studio in Stash matches, the bracket text is still returned as the studio, so you can create or link it from the scrape dialog.
@@ -130,6 +130,7 @@ The scraper needs to reach Stash's GraphQL API to read your performers, studios 
 | `api_key` | detected (see above), else empty | Stash API key. Can be overridden by the `STASH_API_KEY` environment variable. |
 | `review_tag` | `Date Needs Review` | Tag added to scenes with ambiguous dates. Leave empty to disable it. |
 | `two_digit_year_order` | `auto` | `auto` treats dates like `23.04.15` as ambiguous. `ymd` always reads them as YY.MM.DD. |
+| `match_performer_aliases` | `true` | Also match performers by alias. `false` matches primary names only, like Auto Tag. |
 | `match_scope` | `path` | `path` matches across the full path, like Auto Tag. `filename` ignores folder names. |
 | `cache_ttl_seconds` | `300` | How long, in seconds, to cache the library lists. `0` turns the cache off. |
 

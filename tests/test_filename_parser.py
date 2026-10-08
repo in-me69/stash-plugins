@@ -46,9 +46,37 @@ class NameMatchingTest(unittest.TestCase):
         self.assertTrue(find_name("Carol", "_carol_"))
         self.assertTrue(find_name("Carol", "(Carol)"))
 
-    def test_performer_aliases_are_not_matched(self):
+    def test_performer_aliases_are_matched(self):
         result = scrape_path("/v/Ally S in the park.mp4", LIBRARY)
+        self.assertEqual(names(result, "performers"), ["Alice Smith"])
+        result = scrape_path("/v/Ally S in the park.mp4", LIBRARY, {"match_performer_aliases": "false"})
         self.assertEqual(names(result, "performers"), [])
+
+    def test_short_aliases_are_not_matched(self):
+        library = Library([Entity("Bougie Babe", ["BB"])], [], [])
+        self.assertNotIn("performers", scrape_path("/v/Pool Day BB.mp4", library))
+
+    def test_underscores_in_names_are_kept_for_matching(self):
+        for performer in (Entity("bougie_bb"), Entity("Rachel Ray", ["bougie_bb"])):
+            library = Library([performer], [], [])
+            for name in ("Pool Day - bougie_bb.mp4", "Pool.Day.-.bougie_bb.mp4"):
+                result = scrape_path("/v/" + name, library)
+                self.assertEqual(names(result, "performers"), [performer.name], name)
+                self.assertEqual(result["title"], "Pool Day", name)
+
+    def test_performer_who_is_also_the_studio(self):
+        for studios in ([Entity("Bougie BB")], []):
+            library = Library([Entity("Bougie BB")], studios, [])
+            result = scrape_path("/v/[Bougie BB] Pool Day.mp4", library)
+            self.assertEqual(names(result, "performers"), ["Bougie BB"], studios)
+            self.assertEqual(result["title"], "Pool Day")
+        # With the studio in Stash, the bracket is the studio too.
+        result = scrape_path("/v/[Bougie BB] Pool Day.mp4", Library([Entity("Bougie BB")], [Entity("Bougie BB")], []))
+        self.assertEqual(result["studio"], {"name": "Bougie BB"})
+        # A performer who is also the studio named in a folder still counts.
+        result = scrape_path("/v/Bougie BB/Pool Day.mp4", Library([Entity("Bougie BB")], [Entity("Bougie BB")], []))
+        self.assertEqual(names(result, "performers"), ["Bougie BB"])
+        self.assertEqual(result["studio"], {"name": "Bougie BB"})
 
     def test_longer_performer_name_wins_over_one_inside_it(self):
         library = Library(
