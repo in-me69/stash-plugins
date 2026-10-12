@@ -259,7 +259,10 @@ Adds **Reset metadata…** to the scene list's menu, next to **Identify…** and
 | stash-box IDs, so a later Identify doesn't find the same wrong match by ID | markers and galleries |
 | the **Organized** flag | |
 
-- **The cover is regenerated.** After clearing, the plugin runs Stash's **Generate** for just those scenes, with overwrite on, so each cover is replaced by a fresh screenshot from the video. If you use the Folder Media plugin, a reset replaces a folder cover with a screenshot too. Run Folder Media's task afterwards to restore the folder image.
+- **The cover is reset.**
+  - If the [Folder Media](#folder-media-plugin) plugin is installed and enabled, its rules run on each reset scene first. A `cover`/`poster` image next to the video becomes the cover again, and a `teaser`/`preview`/`trailer` video is copied back as the preview.
+  - Scenes without a folder cover, or every scene when Folder Media isn't in use, get a fresh screenshot from Stash's **Generate**, with overwrite on.
+  - Folder Media is found in the same plugins folder as Scene Reset, or one level down, such as `plugins/community/`. If it's enabled but can't be found, a warning is logged and screenshots are generated instead.
 - **All tags are removed,** including ones you added yourself, because Stash doesn't record which tags came from Identify.
 - **Nothing is deleted.** Performers, studios and tags are only removed from the scene, even if Identify created them and no scene uses them any more.
 - **A reset can't be undone,** so it always asks you to confirm first.

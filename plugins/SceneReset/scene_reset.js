@@ -76,7 +76,8 @@
       `Reset ${noun}?\n\n` +
         "This removes the title, date, code, details, director, URLs, studio, " +
         "performers, tags, groups and stash-box IDs, unticks Organized, and " +
-        "regenerates the cover.\n\nFiles, play history, rating and markers are kept. " +
+        "resets the cover (a folder cover/poster image if Folder Media finds one, " +
+        "otherwise a new screenshot).\n\nFiles, play history, rating and markers are kept. " +
         "This can't be undone."
     );
     if (!ok) return;
