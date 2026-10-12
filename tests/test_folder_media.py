@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "FolderMedia"))
 
 import folder_media  # noqa: E402
-from folder_media import find_folder_media  # noqa: E402
+from folder_media import NamePatterns, find_folder_media  # noqa: E402
 
 VIDEO = ["mp4", "mkv", "webm"]
 IMAGE = ["jpg", "jpeg", "png", "webp"]
@@ -99,12 +99,54 @@ class FindPreviewTest(FolderTest):
         self.assertEqual(self.find(self.touch("teaser.mp4")), (None, None))
 
 
+class NamePatternsTest(unittest.TestCase):
+    def rank(self, text, name):
+        return NamePatterns(text, "cover").rank(name)
+
+    def test_plain_names_in_order_ignoring_case_and_extension(self):
+        self.assertEqual(self.rank("cover, poster", "POSTER.jpg"), 1)
+        self.assertEqual(self.rank("cover, poster", "/a/b/Cover.PNG"), 0)
+        self.assertIsNone(self.rank("cover, poster", "my cover.jpg"))  # whole name must match
+
+    def test_regular_expressions(self):
+        self.assertEqual(self.rank(r"folder, .*[-_ ]cover", "Scene_Cover.jpg"), 1)
+        self.assertEqual(self.rank(r"fanart\d?", "fanart2.jpg"), 0)
+
+    def test_commas_inside_repeat_counts_dont_split(self):
+        patterns = NamePatterns(r"cover\d{1,2}, poster", "cover")
+        self.assertEqual(len(patterns.patterns), 2)
+        self.assertEqual(patterns.rank("cover12.jpg"), 0)
+
+    def test_invalid_or_empty_falls_back_to_default(self):
+        with redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(NamePatterns("cover(", "poster").rank("poster.jpg"), 0)
+        self.assertIn("Invalid name pattern", stderr.getvalue())
+        self.assertEqual(NamePatterns(" , ", "poster").rank("poster.jpg"), 0)
+
+
+class CustomNamesTest(FolderTest):
+    def find(self, video, cover, preview):
+        with redirect_stderr(io.StringIO()):
+            return find_folder_media(video, VIDEO, IMAGE, NamePatterns(cover, "cover"), NamePatterns(preview, "teaser"))
+
+    def test_custom_cover_names(self):
+        video = self.touch("Scene.mp4", "cover.jpg", "folder.jpg", "Scene-fanart.jpg")
+        self.assertEqual(self.find(video, "folder, cover", "teaser")[0], self.path("folder.jpg"))
+        self.assertEqual(self.find(video, r".*-fanart", "teaser")[0], self.path("Scene-fanart.jpg"))
+
+    def test_custom_preview_names_dont_count_as_a_second_video(self):
+        video = self.touch("Scene.mp4", "sample.mp4")
+        self.assertEqual(self.find(video, "cover", "teaser"), (None, None))  # two videos
+        self.assertEqual(self.find(video, "cover", "sample"), (None, self.path("sample.mp4")))
+
+
 class FakeStash(BaseHTTPRequestHandler):
     """Answers the plugin's GraphQL queries from class-level state and
     records sceneUpdate calls."""
     scenes = {}  # id -> (path, {fingerprint type: value})
     generated = ""
     algorithm = "OSHASH"
+    plugin_config = {}
     updates = []
     cookies = []
 
@@ -119,7 +161,9 @@ class FakeStash(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FakeStash.cookies.append(self.headers.get("Cookie"))
         query, variables = body["query"], body.get("variables") or {}
-        if "configuration" in query:
+        if "plugins(" in query:
+            data = {"configuration": {"plugins": FakeStash.plugin_config}}
+        elif "configuration" in query:
             data = {"configuration": {"general": {
                 "videoExtensions": VIDEO, "imageExtensions": IMAGE,
                 "generatedPath": FakeStash.generated, "videoFileNamingAlgorithm": FakeStash.algorithm,
@@ -154,6 +198,7 @@ class PluginRunTest(FolderTest):
         self.generated = os.path.join(self.tmp.name, "generated")
         FakeStash.scenes, FakeStash.updates, FakeStash.cookies = {}, [], []
         FakeStash.generated, FakeStash.algorithm = self.generated, "OSHASH"
+        FakeStash.plugin_config = {}
 
     def run_plugin(self, args, server_connection=None):
         plugin_input = {
@@ -236,6 +281,21 @@ class PluginRunTest(FolderTest):
         self.assertEqual(FakeStash.updates, [])
         self.assertFalse(os.path.exists(self.generated))
         self.assertEqual(result["output"], "No folder media")
+
+    def test_names_from_plugin_settings(self):
+        FakeStash.plugin_config = {"FolderMedia": {"coverNames": "folder", "previewNames": "sample"}}
+        video = self.touch("one/Scene.mp4", "one/cover.jpg", "one/folder.jpg", "one/teaser.mp4")
+        self.touch("one/sample.mp4", content=b"SAMPLE")
+        FakeStash.scenes = {"7": (video, {"oshash": "abc123"})}
+        # teaser.mp4 is now an ordinary second video, so nothing qualifies...
+        result, _ = self.run_plugin({"hookContext": {"id": 7}})
+        self.assertEqual(result["output"], "No folder media")
+        # ...until it's gone.
+        os.remove(self.path("one/teaser.mp4"))
+        result, _ = self.run_plugin({"hookContext": {"id": 7}})
+        self.assertIn("folder.jpg", result["output"])
+        with open(self.preview_file("abc123"), "rb") as f:
+            self.assertEqual(f.read(), b"SAMPLE")
 
     def test_task_updates_every_matching_scene(self):
         a = self.touch("a/A.mp4", "a/cover.jpg", "a/trailer.mp4")

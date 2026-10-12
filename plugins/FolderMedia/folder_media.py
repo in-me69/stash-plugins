@@ -16,7 +16,9 @@ is missing, so the teaser is copied there.
 
 For now this only applies when the video is the only video in its folder
 (teasers aside), so the files clearly belong to it. Names are matched
-ignoring case and extension; earlier names in the lists below win.
+ignoring case and extension; earlier names win. The names can be changed in
+the plugin's settings: comma-separated, in order of preference, each a plain
+name or a regular expression matched against the whole file name.
 
 A task does the same for existing scenes.
 
@@ -27,14 +29,17 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import shutil
 import sys
 import tempfile
 import urllib.error
 import urllib.request
 
-COVER_NAMES = ("cover", "poster")  # in order of preference
-PREVIEW_NAMES = ("teaser", "preview", "trailer")  # in order of preference
+PLUGIN_ID = "FolderMedia"
+# Defaults for the plugin's coverNames/previewNames settings, in order of preference.
+DEFAULT_COVER_NAMES = "cover, poster"
+DEFAULT_PREVIEW_NAMES = "teaser, preview, trailer"
 # Browsers play these; used first if a preview exists in several formats.
 PREFERRED_PREVIEW_EXTENSIONS = ("mp4", "m4v", "webm")
 
@@ -64,39 +69,72 @@ def _stem(name):
     return os.path.splitext(os.path.basename(name))[0].casefold()
 
 
-def is_preview_file(path):
+class NamePatterns:
+    """An ordered list of file-name patterns, from a setting like
+    "cover, poster" or "teaser, .*[-_ ]trailer". Each entry is a regular
+    expression matched against the whole name (without extension), ignoring
+    case; a plain word just matches itself. Earlier entries are preferred."""
+
+    # Split on commas, except inside a {m,n} repeat count.
+    _SPLIT = re.compile(r",(?![^{]*\})")
+
+    def __init__(self, text, default):
+        self.text = text
+        try:
+            self.patterns = self._compile(text)
+        except re.error as e:
+            log(f"Invalid name pattern {text!r} ({e}); using {default!r}", "warning")
+            self.text, self.patterns = default, self._compile(default)
+        if not self.patterns:
+            self.text, self.patterns = default, self._compile(default)
+
+    @classmethod
+    def _compile(cls, text):
+        return [re.compile(p.strip(), re.IGNORECASE) for p in cls._SPLIT.split(text or "") if p.strip()]
+
+    def rank(self, name):
+        """Index of the first pattern the file name matches, or None."""
+        stem = os.path.splitext(os.path.basename(name))[0]
+        for i, pattern in enumerate(self.patterns):
+            if pattern.fullmatch(stem):
+                return i
+        return None
+
+    def __repr__(self):
+        return f"NamePatterns({self.text!r})"
+
+
+DEFAULT_COVER_PATTERNS = NamePatterns(DEFAULT_COVER_NAMES, DEFAULT_COVER_NAMES)
+DEFAULT_PREVIEW_PATTERNS = NamePatterns(DEFAULT_PREVIEW_NAMES, DEFAULT_PREVIEW_NAMES)
+
+
+def is_preview_file(path, preview_patterns=DEFAULT_PREVIEW_PATTERNS):
     """Whether a file's name marks it as a teaser/preview/trailer."""
-    return _stem(path) in PREVIEW_NAMES
+    return preview_patterns.rank(path) is not None
 
 
-def _pick(entries, names, extensions, preferred_extensions=()):
-    """The entry whose stem is the earliest of `names`, with one of
-    `extensions`. Among several extensions for one name, preferred_extensions
+def _pick(entries, patterns, extensions, preferred_extensions=()):
+    """The entry whose name matches the earliest of `patterns`, with one of
+    `extensions`. Among several files for one pattern, preferred_extensions
     come first, then alphabetical, so the choice is predictable."""
-    by_name = {}
+    matches = []
     for e in entries:
-        stem = _stem(e.name)
-        if stem in names and _extension(e.name) in extensions:
-            by_name.setdefault(stem, []).append(e.path)
-
-    def rank(path):
-        ext = _extension(path)
-        order = preferred_extensions.index(ext) if ext in preferred_extensions else len(preferred_extensions)
-        return order, path
-
-    for name in names:
-        if name in by_name:
-            return sorted(by_name[name], key=rank)[0]
-    return None
+        rank = patterns.rank(e.name)
+        if rank is not None and _extension(e.name) in extensions:
+            ext = _extension(e.name)
+            ext_order = preferred_extensions.index(ext) if ext in preferred_extensions else len(preferred_extensions)
+            matches.append((rank, ext_order, e.path))
+    return min(matches)[2] if matches else None
 
 
-def find_folder_media(video_path, video_extensions, image_extensions):
+def find_folder_media(video_path, video_extensions, image_extensions,
+                      cover_patterns=DEFAULT_COVER_PATTERNS, preview_patterns=DEFAULT_PREVIEW_PATTERNS):
     """(cover image, preview video) for video_path; either may be None.
 
     Both are None unless video_path is the only video in its folder, not
     counting teaser/preview/trailer files. Only the folder itself is looked
     at, not subfolders."""
-    if is_preview_file(video_path):
+    if is_preview_file(video_path, preview_patterns):
         return None, None  # a teaser imported as its own scene
     folder = os.path.dirname(video_path)
     try:
@@ -108,12 +146,13 @@ def find_folder_media(video_path, video_extensions, image_extensions):
     video_extensions = {x.lower().lstrip(".") for x in video_extensions}
     image_extensions = {x.lower().lstrip(".") for x in image_extensions}
 
-    videos = [e for e in entries if _extension(e.name) in video_extensions and not is_preview_file(e.name)]
+    videos = [e for e in entries
+              if _extension(e.name) in video_extensions and not is_preview_file(e.name, preview_patterns)]
     if len(videos) != 1:
         return None, None
 
-    cover = _pick(entries, COVER_NAMES, image_extensions)
-    preview = _pick(entries, PREVIEW_NAMES, video_extensions, PREFERRED_PREVIEW_EXTENSIONS)
+    cover = _pick(entries, cover_patterns, image_extensions)
+    preview = _pick(entries, preview_patterns, video_extensions, PREFERRED_PREVIEW_EXTENSIONS)
     return cover, preview
 
 
@@ -144,11 +183,14 @@ def copy_into_place(source, destination):
 class Settings:
     """The parts of Stash's configuration this plugin needs."""
 
-    def __init__(self, video_extensions, image_extensions, generated_path, hash_algorithm):
+    def __init__(self, video_extensions, image_extensions, generated_path, hash_algorithm,
+                 cover_patterns=DEFAULT_COVER_PATTERNS, preview_patterns=DEFAULT_PREVIEW_PATTERNS):
         self.video_extensions = video_extensions
         self.image_extensions = image_extensions
         self.generated_path = generated_path
         self.hash_algorithm = hash_algorithm  # "oshash" or "md5"
+        self.cover_patterns = cover_patterns
+        self.preview_patterns = preview_patterns
 
     def preview_path(self, file_hash):
         return os.path.join(self.generated_path, "screenshots", f"{file_hash}.mp4")
@@ -198,12 +240,25 @@ class Stash:
         generated = general.get("generatedPath") or ""
         if generated and not os.path.isabs(generated) and self.config_dir:
             generated = os.path.join(self.config_dir, generated)
+        plugin = self.plugin_settings()
         return Settings(
             general.get("videoExtensions") or DEFAULT_VIDEO_EXTENSIONS,
             general.get("imageExtensions") or DEFAULT_IMAGE_EXTENSIONS,
             generated,
             (general.get("videoFileNamingAlgorithm") or "OSHASH").lower(),
+            NamePatterns(plugin.get("coverNames") or DEFAULT_COVER_NAMES, DEFAULT_COVER_NAMES),
+            NamePatterns(plugin.get("previewNames") or DEFAULT_PREVIEW_NAMES, DEFAULT_PREVIEW_NAMES),
         )
+
+    def plugin_settings(self):
+        """This plugin's settings from Settings > Plugins ({} if unset)."""
+        try:
+            config = self.query("query($ids: [ID!]) { configuration { plugins(include: $ids) } }",
+                                {"ids": [PLUGIN_ID]})["configuration"]["plugins"] or {}
+        except (RuntimeError, KeyError, TypeError):
+            return {}
+        values = config.get(PLUGIN_ID) or {}
+        return {k: v for k, v in values.items() if isinstance(v, str) and v.strip()}
 
     _SCENE_FIELDS = "id files { path fingerprints { type value } }"
 
@@ -234,7 +289,8 @@ def apply_folder_media(stash, settings, scene):
     video = files[0]
     if not os.path.isfile(video["path"]):
         return []  # inside a zip, or not reachable from here
-    cover, preview = find_folder_media(video["path"], settings.video_extensions, settings.image_extensions)
+    cover, preview = find_folder_media(video["path"], settings.video_extensions, settings.image_extensions,
+                                       settings.cover_patterns, settings.preview_patterns)
     scene_id = str(scene["id"])
     done = []
 

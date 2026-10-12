@@ -6,6 +6,15 @@ exec:
   - python
   - "{pluginDir}/folder_media.py"
 interface: raw
+settings:
+  coverNames:
+    displayName: Cover image names
+    description: 'Comma-separated, in order of preference. Each is a name or a regular expression matched against the whole file name (case and extension ignored). Default: cover, poster'
+    type: STRING
+  previewNames:
+    displayName: Preview video names
+    description: 'Comma-separated, in order of preference, as above. These files don''t count as a second video in the folder. Default: teaser, preview, trailer'
+    type: STRING
 hooks:
   - name: Set cover and preview from folder media
     description: When a scan adds a scene, set its cover and preview video from cover/poster and teaser/preview/trailer files in the same folder.

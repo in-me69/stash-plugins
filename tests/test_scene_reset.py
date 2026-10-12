@@ -39,7 +39,9 @@ class FakeStash(BaseHTTPRequestHandler):
         if "input" in v:  # Folder Media's code names its variable "input"
             v = {"i": v["input"]}
         FakeStash.calls.append((q, v))
-        if "plugins" in q:
+        if "plugins(" in q:  # Folder Media's own settings
+            payload = {"data": {"configuration": {"plugins": {}}}}
+        elif "plugins" in q:
             payload = {"data": {"plugins": FakeStash.plugins}}
         elif "configuration" in q:
             payload = {"data": {"configuration": {"general": {

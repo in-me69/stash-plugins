@@ -156,6 +156,7 @@ When a scan adds a new scene, this plugin looks in the same folder as the video 
   - Which extensions count as video or image comes from **Settings > Library**.
 - **Names ignore case and extension.** `cover.jpg`, `Poster.PNG`, `Teaser.mp4` and `trailer.webm` all work.
   - When several names are present, `cover` beats `poster`, and `teaser` beats `preview`, which beats `trailer`.
+  - You can change the names. See [Changing the names](#changing-the-names).
   - If a preview exists in several formats, `mp4`, `m4v` and `webm` are preferred because browsers play them.
 - **Only the video's own folder is searched,** not subfolders.
 - **Some scenes are skipped:** scenes made of several files, videos inside zip files, and a teaser that was imported as a scene of its own.
@@ -181,6 +182,24 @@ To do that, add this pattern under **Settings > Library > Excluded Video Pattern
 
 Teasers that were already imported can then be deleted from Stash. Choose not to delete the file when you do.
 
+If you change the preview names (see below), update this pattern to match.
+
+### Changing the names
+
+The names are settings, under **Settings > Plugins > Folder Media**:
+
+| Setting | Default |
+|---|---|
+| **Cover image names** | `cover, poster` |
+| **Preview video names** | `teaser, preview, trailer` |
+
+- **Order matters.** Each setting is a comma-separated list, in order of preference: earlier entries win when several files match.
+- **Matching.** Each entry is matched against the **whole** file name, ignoring case and extension. A plain word matches only that name, so `cover` matches `Cover.jpg` but not `my cover.jpg`.
+- **Patterns.** An entry can also be a regular expression. For example, `folder, cover, .*[-_ ]cover` also matches `folder.jpg` and `Scene-cover.jpg`.
+- **Repeat counts are safe.** Commas inside `{m,n}` repeat counts don't split the list.
+- **Bad patterns are skipped.** If a setting isn't a valid pattern, the plugin logs a warning and uses the default.
+- **Preview names are never scenes.** Files matching the preview names never count as a second video in the folder.
+
 ### Previews: what to know
 
 - **How the copy works.** Stash has no API for setting a preview. It keeps each scene's preview at `<generated folder>/screenshots/<file hash>.mp4`, so the plugin **copies** the teaser there. The hash is the oshash or MD5 hash, depending on Stash's file naming setting.
@@ -202,7 +221,7 @@ The hook only runs for **newly added** scenes. For scenes already in Stash, run 
 2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Folder Media** is enabled.
 3. Optionally, add the excluded pattern above.
 
-It needs no configuration. Stash gives plugins their own connection details, including your login session, so no URL or API key is needed. It uses only the Python standard library. The file names are fixed for now; making them configurable patterns is a possible later change.
+It works without any configuration, using the default names. Stash gives plugins their own connection details, including your login session, so no URL or API key is needed. It uses only the Python standard library.
 
 ## Stash-box Linker (plugin)
 
@@ -247,7 +266,7 @@ It needs no other configuration. It uses the connection details Stash gives plug
 
 ## Scene Reset (plugin)
 
-Adds **Reset metadata…** to the scene list's menu, next to **Identify…** and **Generate…**. Use it when Identify (or a scraper) matched the wrong scene: it strips the metadata from the selected scenes so you can start again.
+Adds **Reset metadata…** to the scene list's menu, next to **Identify…** and **Generate…**, and to the **…** menu on each scene's own page. Use it when Identify (or a scraper) matched the wrong scene: it strips the metadata from the selected scenes so you can start again.
 
 ### What a reset does
 
@@ -269,13 +288,17 @@ Adds **Reset metadata…** to the scene list's menu, next to **Identify…** and
 
 ### Using it
 
+**Several scenes:**
+
 1. In the scene list, select the scenes to reset. This works in the grid and list views.
 2. Open the **…** menu and choose **Reset metadata…**, then confirm.
 3. The reset runs as a task. You can follow it on the **Tasks** page, then refresh the list.
 
+**One scene:** on the scene's own page, open the **…** menu next to the title and choose **Reset metadata…**. It sits under **Generate…**. When the task finishes, reload the page.
+
 The plugin's **Reset scenes** task also appears under **Settings > Tasks > Plugin Tasks**. Run from there with no scenes selected, it does nothing, so it can't reset your whole library by accident.
 
-**How the menu item is added:** Stash doesn't give plugins a way to add items to that menu, so the plugin's script watches the page and adds the item when the menu opens. It reads the selected scenes from the checked cards or rows. A future Stash update that changes the scene list's layout could stop the item appearing. If that happens, nothing is reset by mistake; the item just doesn't show.
+**How the menu item is added:** Stash doesn't give plugins a way to add items to these menus, so the plugin's script watches the page and adds the item when a menu opens. On the scene list, it reads the selected scenes from the checked cards or rows. On a scene page, it takes the scene from the page address. A future Stash update that changes the scene list's layout could stop the item appearing. If that happens, nothing is reset by mistake; the item just doesn't show.
 
 ### Install
 
