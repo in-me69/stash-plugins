@@ -1,0 +1,30 @@
+name: Stash-box Linker
+description: When a studio or performer is linked to one stash-box (e.g. StashDB), finds the same one on your other stash-boxes (e.g. ThePornDB) and adds those IDs too. Uncertain matches are tagged for review instead.
+version: 0.1.0
+url: https://github.com/in-me69/stash-plugins
+exec:
+  - python
+  - "{pluginDir}/stash_box_linker.py"
+interface: raw
+settings:
+  reviewTag:
+    displayName: Review tag
+    description: Tag added to studios and performers whose match on another stash-box was uncertain. Default "Stash-box Match Needs Review".
+    type: STRING
+hooks:
+  - name: Link across stash-boxes
+    description: When a studio or performer is created, or its stash-box IDs change, look for it on the other configured stash-boxes.
+    triggeredBy:
+      - Studio.Create.Post
+      - Studio.Update.Post
+      - Performer.Create.Post
+      - Performer.Update.Post
+tasks:
+  - name: Link studios across stash-boxes
+    description: For every studio with a stash-box ID, look for it on the other configured stash-boxes.
+    defaultArgs:
+      entity: studio
+  - name: Link performers across stash-boxes
+    description: For every performer with a stash-box ID, look for it on the other configured stash-boxes.
+    defaultArgs:
+      entity: performer

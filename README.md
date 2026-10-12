@@ -4,6 +4,7 @@ Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
 
 - [Filename Parser](#filename-parser): a scene scraper that reads title, date, studio, performers and tags from the file path.
 - [Folder Media](#folder-media-plugin): a plugin that uses a `cover`/`poster` image and a `teaser`/`preview`/`trailer` video next to a video as the scene's cover and preview.
+- [Stash-box Linker](#stash-box-linker-plugin): a plugin that links studios and performers to the same entry on all your stash-boxes, e.g. StashDB and ThePornDB.
 
 ## Filename Parser
 
@@ -202,9 +203,50 @@ The hook only runs for **newly added** scenes. For scenes already in Stash, run 
 
 It needs no configuration. Stash gives plugins their own connection details, including your login session, so no URL or API key is needed. It uses only the Python standard library. The file names are fixed for now; making them configurable patterns is a possible later change.
 
+## Stash-box Linker (plugin)
+
+When a studio or performer is linked to one stash-box, this plugin looks for the same studio or performer on every other stash-box configured in Stash, and adds those IDs too. For example, a studio added from StashDB gets its ThePornDB ID as well. It works in every direction between all your configured stash-boxes.
+
+**Only the stash-box IDs are added.** Names, images and details aren't changed. You can pull those in later with Stash's Tagger if you want them.
+
+### When it runs
+
+- **When a studio or performer is created** with a stash-box ID, for example from the Tagger.
+- **When a studio's or performer's stash-box IDs change.** Other edits don't trigger it, so they don't cause stash-box searches.
+- **Studios and performers already in Stash:** run **Link studios across stash-boxes** or **Link performers across stash-boxes** from **Settings > Tasks > Plugin Tasks**. They pause briefly between searches to go easy on the stash-boxes.
+
+Studios and performers without any stash-box ID are ignored.
+
+### How it decides it's the same one
+
+Stash itself searches each stash-box, using the API keys you've already set up. The plugin searches by name first, and by up to three aliases if the name finds nothing. A candidate is only considered if its name or one of its aliases matches the local name or an alias, ignoring case and punctuation.
+
+**Studios** are linked when exactly one candidate matches. A candidate is ruled out if both sides have a parent studio and the parents differ. If several candidates remain, a shared website decides.
+
+**Performers** need more, because performer names often collide.
+- A candidate is ruled out if both sides have a birthdate, gender, country code or disambiguation and they differ. A year-only birthdate agrees with a full date in the same year.
+- The performer is linked if exactly one remaining candidate **shares a birthdate or a link** (Twitter/X, Instagram, OnlyFans, website and so on).
+- If nothing else can be compared, a single candidate is accepted only for a name of **two or more words**. A single-word name like "Lily" could be anyone.
+
+An ID that's already linked to another studio or performer in Stash is never linked a second time.
+
+### When it isn't sure
+
+Nothing is linked. The studio or performer gets the tag **`Stash-box Match Needs Review`**, and the candidates are written to Stash's log as a warning. Filter by the tag to link them by hand. The next run that settles the entity removes the tag again, for example after you add the ID yourself.
+
+You can change the tag name in the plugin's settings under **Settings > Plugins**.
+
+### Install
+
+1. Copy `plugins/StashBoxLinker/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
+2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Stash-box Linker** is enabled.
+3. Make sure the stash-boxes you want linked are set up under **Settings > Metadata Providers > Stash-box Endpoints**, with their API keys.
+
+It needs no other configuration. It uses the connection details Stash gives plugins and the standard library only.
+
 ## Tests
 
-Covers both the scraper and the plugin:
+Covers the scraper and the plugins:
 
 ```bash
 python -m unittest discover -s tests -v
