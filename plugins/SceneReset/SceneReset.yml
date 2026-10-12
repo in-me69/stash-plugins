@@ -1,0 +1,14 @@
+name: Scene Reset
+description: Adds "Reset metadata…" to the scene list menu. Removes the title, studio, performers, tags, stash-box IDs and other metadata from the selected scenes (e.g. after a wrong Identify) and regenerates their covers.
+version: 0.1.0
+url: https://github.com/in-me69/stash-plugins
+exec:
+  - python
+  - "{pluginDir}/scene_reset.py"
+interface: raw
+ui:
+  javascript:
+    - scene_reset.js
+tasks:
+  - name: Reset scenes
+    description: Resets the scenes passed in its scene_ids argument. Use "Reset metadata…" in the scene list menu instead of running this directly; on its own it does nothing.

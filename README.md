@@ -5,6 +5,7 @@ Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
 - [Filename Parser](#filename-parser): a scene scraper that reads title, date, studio, performers and tags from the file path.
 - [Folder Media](#folder-media-plugin): a plugin that uses a `cover`/`poster` image and a `teaser`/`preview`/`trailer` video next to a video as the scene's cover and preview.
 - [Stash-box Linker](#stash-box-linker-plugin): a plugin that links studios and performers to the same entry on all your stash-boxes, e.g. StashDB and ThePornDB.
+- [Scene Reset](#scene-reset-plugin): a plugin that adds **Reset metadata…** to the scene list menu, to undo a wrong Identify.
 
 ## Filename Parser
 
@@ -244,9 +245,44 @@ You can change the tag name in the plugin's settings under **Settings > Plugins*
 
 It needs no other configuration. It uses the connection details Stash gives plugins and the standard library only.
 
+## Scene Reset (plugin)
+
+Adds **Reset metadata…** to the scene list's menu, next to **Identify…** and **Generate…**. Use it when Identify (or a scraper) matched the wrong scene: it strips the metadata from the selected scenes so you can start again.
+
+### What a reset does
+
+| Cleared | Kept |
+|---|---|
+| title, studio code, details, director, URLs | the files themselves |
+| date and production date | play count, history and resume point |
+| studio, performers, tags, groups | O-count and rating |
+| stash-box IDs, so a later Identify doesn't find the same wrong match by ID | markers and galleries |
+| the **Organized** flag | |
+
+- **The cover is regenerated.** After clearing, the plugin runs Stash's **Generate** for just those scenes, with overwrite on, so each cover is replaced by a fresh screenshot from the video. If you use the Folder Media plugin, a reset replaces a folder cover with a screenshot too. Run Folder Media's task afterwards to restore the folder image.
+- **All tags are removed,** including ones you added yourself, because Stash doesn't record which tags came from Identify.
+- **Nothing is deleted.** Performers, studios and tags are only removed from the scene, even if Identify created them and no scene uses them any more.
+- **A reset can't be undone,** so it always asks you to confirm first.
+
+### Using it
+
+1. In the scene list, select the scenes to reset. This works in the grid and list views.
+2. Open the **…** menu and choose **Reset metadata…**, then confirm.
+3. The reset runs as a task. You can follow it on the **Tasks** page, then refresh the list.
+
+The plugin's **Reset scenes** task also appears under **Settings > Tasks > Plugin Tasks**. Run from there with no scenes selected, it does nothing, so it can't reset your whole library by accident.
+
+**How the menu item is added:** Stash doesn't give plugins a way to add items to that menu, so the plugin's script watches the page and adds the item when the menu opens. It reads the selected scenes from the checked cards or rows. A future Stash update that changes the scene list's layout could stop the item appearing. If that happens, nothing is reset by mistake; the item just doesn't show.
+
+### Install
+
+1. Copy `plugins/SceneReset/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
+2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Scene Reset** is enabled.
+3. Reload the Stash page in your browser so the menu script loads.
+
 ## Tests
 
-Covers the scraper and the plugins:
+Covers the scraper and the plugins' Python code:
 
 ```bash
 python -m unittest discover -s tests -v
