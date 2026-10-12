@@ -1,6 +1,9 @@
 # stash-scrapers
 
-Custom scrapers for [Stash](https://github.com/stashapp/stash).
+Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
+
+- [Filename Parser](#filename-parser): a scene scraper that reads title, date, studio, performers and tags from the file path.
+- [Folder Media](#folder-media-plugin): a plugin that uses a `cover`/`poster` image and a `teaser`/`preview`/`trailer` video next to a video as the scene's cover and preview.
 
 ## Filename Parser
 
@@ -134,7 +137,74 @@ The scraper needs to reach Stash's GraphQL API to read your performers, studios 
 | `match_scope` | `path` | `path` matches across the full path, like Auto Tag. `filename` ignores folder names. |
 | `cache_ttl_seconds` | `300` | How long, in seconds, to cache the library lists. `0` turns the cache off. |
 
-### Tests
+## Folder Media (plugin)
+
+When a scan adds a new scene, this plugin looks in the same folder as the video and uses what it finds instead of letting Stash generate it:
+
+| File in the folder | Becomes |
+|---|---|
+| `cover` or `poster` (any image extension) | the scene's **cover** |
+| `teaser`, `preview` or `trailer` (any video extension) | the scene's **preview video**, the clip that plays when you hover over a scene |
+
+### Rules
+
+- **The video must be the only video in its folder.** Otherwise there's no telling which video the files belong to.
+  - Teaser, preview and trailer files don't count as a second video.
+  - Videos in subfolders don't count either.
+  - Which extensions count as video or image comes from **Settings > Library**.
+- **Names ignore case and extension.** `cover.jpg`, `Poster.PNG`, `Teaser.mp4` and `trailer.webm` all work.
+  - When several names are present, `cover` beats `poster`, and `teaser` beats `preview`, which beats `trailer`.
+  - If a preview exists in several formats, `mp4`, `m4v` and `webm` are preferred because browsers play them.
+- **Only the video's own folder is searched,** not subfolders.
+- **Some scenes are skipped:** scenes made of several files, videos inside zip files, and a teaser that was imported as a scene of its own.
+
+```
+Pool Day/
+├── Pool Day.mp4    ← the scene
+├── cover.jpg       → cover
+├── teaser.mp4      → preview video
+└── Extras/
+    └── Clip.mp4    (in a subfolder, so ignored)
+```
+
+### Stop Stash importing teasers as scenes
+
+Stash scans every video, so `teaser.mp4` would also become a scene of its own. The plugin ignores teasers both when counting videos and as scenes, but it's tidier to tell Stash to skip them.
+
+To do that, add this pattern under **Settings > Library > Excluded Video Patterns**:
+
+```
+(?i)[\\/](teaser|preview|trailer)\.[^\\/]+$
+```
+
+Teasers that were already imported can then be deleted from Stash. Choose not to delete the file when you do.
+
+### Previews: what to know
+
+- **How the copy works.** Stash has no API for setting a preview. It keeps each scene's preview at `<generated folder>/screenshots/<file hash>.mp4`, so the plugin **copies** the teaser there. The hash is the oshash or MD5 hash, depending on Stash's file naming setting.
+- **Disk space.** The copy uses as much space as the teaser itself.
+- **Size and format.** Stash's own previews are short, small and silent. A full-size teaser with sound still works, but takes longer to start when you hover. Use MP4 with H.264 for the widest browser support. The plugin logs a warning for other formats.
+- **What isn't replaced.** Only the video preview comes from the teaser. Stash's animated `.webp` preview and scrubber sprites, if you generate them, still come from the main video.
+
+### How it avoids the generated versions
+
+The plugin runs on Stash's `Scene.Create.Post` hook. For each new scene, Stash runs that hook *before* it queues cover and preview generation. Both generation steps skip a scene that already has a cover or preview. So whatever the plugin sets, Stash doesn't generate.
+
+There's one exception: if a scan runs with Stash's **overwrite** option on, Stash regenerates everything and replaces the folder media.
+
+The hook only runs for **newly added** scenes. For scenes already in Stash, run the **Set covers and previews from folder media** task from **Settings > Tasks > Plugin Tasks**. It applies the same rules to every scene, and **replaces** the current cover and preview wherever it finds folder media.
+
+### Install
+
+1. Copy `plugins/FolderMedia/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
+2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Folder Media** is enabled.
+3. Optionally, add the excluded pattern above.
+
+It needs no configuration. Stash gives plugins their own connection details, including your login session, so no URL or API key is needed. It uses only the Python standard library. The file names are fixed for now; making them configurable patterns is a possible later change.
+
+## Tests
+
+Covers both the scraper and the plugin:
 
 ```bash
 python -m unittest discover -s tests -v
