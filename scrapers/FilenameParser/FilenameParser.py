@@ -42,7 +42,8 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "review_tag": "Date Needs Review",
     "performer_review_tag": "Performer Needs Review",
-    "two_digit_year_order": "auto",
+    "two_digit_year_order": "ymd",
+    "title_case": "true",
     "match_scope": "path",
     "match_performer_aliases": "true",
     "cache_ttl_seconds": "300",
@@ -320,7 +321,7 @@ def _resolve(interpretations, span):
     return DateCandidate(span, value, 1 if value else 0, ambiguous=True)
 
 
-def find_dates(text, two_digit_year_order="auto"):
+def find_dates(text, two_digit_year_order="ymd"):
     """All date-like spans in text, as DateCandidates (unparseable ones skipped)."""
     candidates = []
     flags = re.IGNORECASE
@@ -346,7 +347,12 @@ def find_dates(text, two_digit_year_order="auto"):
     for m in re.finditer(_D + r"(?P<a>\d{2})(?P<s>[-._])(?P<b>\d{2})(?P=s)(?P<c>\d{2})" + _ND, text):
         a, b, cc = int(m["a"]), int(m["b"]), int(m["c"])
         ymd = (_century(a), b, cc)
-        readings = [ymd] if two_digit_year_order == "ymd" else [ymd, (_century(cc), b, a), (_century(cc), a, b)]
+        # "ymd" takes the year first, as scene releases (and Stash's own
+        # query builder) do, unless that isn't a valid date.
+        if two_digit_year_order == "ymd" and _valid(*ymd):
+            readings = [ymd]
+        else:
+            readings = [ymd, (_century(cc), b, a), (_century(cc), a, b)]
         c = _resolve(readings, m.span())
         if c:
             candidates.append(c)
@@ -471,6 +477,9 @@ def build_title(stem, removed_spans, performer_names, studio_names):
 
     def without(names):
         drop = [d for c, d in segments if is_name_block(original[c[0]:c[1]], names)]
+        kept = [c for c, d in segments if d not in drop]
+        if kept:
+            drop += _leading_name_spans(original, kept[0], studio_names)
         return clean_title(remove_spans(text, drop).replace(_GAP, " "))
 
     # Prefer dropping performer and studio blocks; if that leaves nothing (the
@@ -480,6 +489,48 @@ def build_title(stem, removed_spans, performer_names, studio_names):
         or without(studio_names)
         or clean_title(text.replace(_GAP, " "))
     )
+
+
+def _leading_name_spans(text, first, names):
+    """Spans of names that open the first segment, as a site name does in a
+    release name ("site.title.1080p"). Only at the start: a name ending a
+    title ("Goes To Other Site") is more likely part of it."""
+    spans = []
+    for name in names:
+        for s, e in find_name(name, text[first[0]:first[1]]):
+            if not re.search(r"[^\W_]", text[first[0]:first[0] + s]):
+                spans.append((first[0] + s, first[0] + e))
+    return spans
+
+
+# Words left lowercase inside a title-cased title (not first or last).
+_SMALL_WORDS = {
+    "a", "an", "the", "and", "but", "or", "nor", "for", "so", "yet",
+    "as", "at", "by", "in", "of", "on", "to", "up", "via", "vs", "vs.",
+}
+_WORD_RE = re.compile(r"[^\W\d_][\w'’]*")
+
+
+def title_case(title):
+    """Title Case: words written all in lowercase are capitalised, apart from
+    small words like "and" or "of" mid-title. Words with capitals of their
+    own ("McKenzie", "BBC", "iPhone") are left alone, unless the whole title
+    is in capitals."""
+    if title.isupper():
+        title = title.lower()
+    words = list(_WORD_RE.finditer(title))
+    out, pos = [], 0
+    for i, m in enumerate(words):
+        word = m.group(0)
+        out.append(title[pos:m.start()])
+        if word.islower():
+            edge = i == 0 or i == len(words) - 1 or title[pos:m.start()].rstrip().endswith((":", "-", "–", "—"))
+            if edge or word not in _SMALL_WORDS:
+                word = word[0].upper() + word[1:]
+        out.append(word)
+        pos = m.end()
+    out.append(title[pos:])
+    return "".join(out)
 
 
 def _remove_unbalanced_brackets(text):
@@ -635,6 +686,10 @@ def log_performer_matches(performers, text, use_aliases=True):
         log(f"Performer {p.name}: matched {', '.join(_unique(found))}")
 
 
+def _enabled(value):
+    return str(value).strip().lower() not in ("false", "no", "0", "off", "")
+
+
 def scrape_path(path, library, options=None):
     options = {**DEFAULT_CONFIG, **(options or {})}
     path = path.replace("\\", "/")
@@ -645,7 +700,7 @@ def scrape_path(path, library, options=None):
     full = path[: len(path) - len(basename)] + stem
     match_text = full if options["match_scope"] == "path" else stem
 
-    use_aliases = str(options["match_performer_aliases"]).strip().lower() not in ("false", "no", "0", "off")
+    use_aliases = _enabled(options["match_performer_aliases"])
     performers = match_performers(library, match_text, use_aliases)
     studio = match_studio(library, match_text)
     tags = match_tags(library, match_text)
@@ -707,6 +762,8 @@ def scrape_path(path, library, options=None):
         studio_names,
     )
 
+    if title and _enabled(options["title_case"]):
+        title = title_case(title)
     if title:
         result["title"] = title
     if date_value:

@@ -6,6 +6,11 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Filename Parser (scraper)
 
+### 0.8.0 — 2026-10-14
+- Two-digit-year dates like `15.10.07` are read year first, as 2015-10-07, like scene releases and Stash's own query builder. The other readings are only tried when that isn't a valid date. Set `two_digit_year_order = auto` to treat them as ambiguous, as before.
+- A studio name that opens the title is removed from it, as in `underwatershow.two.dressed.beauties`.
+- Titles are put in Title Case. Words with capitals of their own, like `McKenzie` or `BBC`, are left alone. Set `title_case = false` to keep the filename's own case.
+
 ### 0.7.1 — 2026-10-14
 - Text that is an alias of several performers, such as a folder `Gracie`, no longer adds all of them. A performer whose own name it is wins. Otherwise none of them is added, unless one also matched elsewhere in the path, and the scene gets the new `performer_review_tag` (`Performer Needs Review`).
 - A performer with the studio's name as an alias, such as the site they were credited on, is no longer added to every scene from that studio. A performer whose own name is the studio's name still is.
