@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 scrapers/*/config.ini
 scrapers/*/.library-cache.json
+_site/

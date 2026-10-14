@@ -9,6 +9,28 @@ Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
 
 Each one has its own version number. Plugin versions show under **Settings > Plugins** in Stash, and the scraper's is in a comment at the bottom of its `.yml` file. To see what changed since the version you have, check [CHANGELOG.md](CHANGELOG.md).
 
+## Installing
+
+The plugins and the scraper are published as Stash **package sources**, so Stash can install them and tell you when there's an update.
+
+**Plugins:**
+1. In Stash, go to **Settings > Plugins > Available Plugins** and click **Add Source**.
+2. Fill in:
+   - **Name:** `stash-plugins`, or whatever you like.
+   - **Source URL:** `https://in-me69.github.io/stash-plugins/main/index.yml`
+   - **Local path:** `stash-plugins`. This is the folder inside your plugins directory where they're installed.
+3. Expand the new source, tick the plugins you want, and click **Install**.
+
+**Scraper:** the same steps, under **Settings > Metadata Providers > Available Scrapers > Add Source**, with this source URL:
+
+```
+https://in-me69.github.io/stash-plugins/main/scrapers/index.yml
+```
+
+**Updates:** use **Check for updates** under the installed plugins or scrapers. Each package's version is its version number plus the commit it was built from, for example `0.3.1-9236009`.
+
+**Manual install:** the Install steps under each one below copy the folder by hand. Use them if you'd rather not add a source. Don't use both methods for the same package, or Stash loads it twice.
+
 ## Filename Parser
 
 A scene scraper that fills in metadata from the scene's file path:
@@ -103,6 +125,8 @@ The scraper recognizes this filename format and parses it exactly:
 - Auto Tag–style matches from the rest of the path are added as well.
 
 ### Install
+
+Install it from the package source (see [Installing](#installing)). To install it by hand instead:
 
 1. Copy `scrapers/FilenameParser/` into your Stash `scrapers` directory. This directory is next to Stash's `config.yml`, or set under **Settings > System > Scrapers Path**.
 2. If Stash has a login, make sure it has an API key: generate one under **Settings > Security** if you haven't already.
@@ -244,6 +268,8 @@ The hook only runs for **newly added** scenes. For scenes already in Stash, run 
 
 ### Install
 
+Install it from the package source (see [Installing](#installing)). To install it by hand instead:
+
 1. Copy `plugins/FolderMedia/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
 2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Folder Media** is enabled.
 3. Optionally, add the excluded pattern above.
@@ -284,6 +310,8 @@ Nothing is linked. The studio or performer gets the tag **`Stash-box Match Needs
 You can change the tag name in the plugin's settings under **Settings > Plugins**.
 
 ### Install
+
+Install it from the package source (see [Installing](#installing)). To install it by hand instead:
 
 1. Copy `plugins/StashBoxLinker/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
 2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Stash-box Linker** is enabled.
@@ -329,9 +357,28 @@ The plugin's **Reset scenes** task also appears under **Settings > Tasks > Plugi
 
 ### Install
 
+Install it from the package source (see [Installing](#installing)). To install it by hand instead:
+
 1. Copy `plugins/SceneReset/` into your Stash `plugins` folder. That folder is next to Stash's `config.yml`, or wherever **Settings > System > Plugins Path** points.
 2. In Stash, go to **Settings > Plugins** and click **Reload plugins**. Make sure **Scene Reset** is enabled.
 3. Reload the Stash page in your browser so the menu script loads.
+
+## Publishing
+
+On every push to `main` that changes a plugin or the scraper, the **Publish to GitHub Pages** workflow does the following:
+1. It runs the tests.
+2. It runs `build_site.py`, which zips each package and writes the two `index.yml` files.
+3. It publishes them to GitHub Pages.
+
+A package's zip holds only the files git tracks in its folder, so local files like a `config.ini` or a cache are never published.
+
+To build locally, run `python3 build_site.py`. The output goes to `_site/`.
+
+`build_site.py` is based on Stash's [plugins-repo-template](https://github.com/stashapp/plugins-repo-template), extended to publish the scraper as well.
+
+## Licence
+
+[AGPL-3.0](LICENSE), the same licence as Stash's own community plugins and scrapers.
 
 ## Tests
 
