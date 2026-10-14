@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "url": "http://localhost:9999",
     "api_key": "",
     "review_tag": "Date Needs Review",
+    "performer_review_tag": "Performer Needs Review",
     "two_digit_year_order": "auto",
     "match_scope": "path",
     "match_performer_aliases": "true",
@@ -583,6 +584,44 @@ def _unique(names):
     return out
 
 
+def resolve_shared_matches(performers, text):
+    """Settles text matched by more than one performer, e.g. a folder
+    "Gracie" that is an alias of several performers. A performer whose own
+    name it is keeps it and the alias matches are dropped. When it's only an
+    alias of them all, it doesn't count for any of them, but a performer with
+    another match of their own is still kept. If none of them is, nothing
+    says which one is meant, so the performers are reported as ambiguous.
+    Returns (performers, names of the ambiguous performers)."""
+    claims = {}
+    for p, spans in performers:
+        own = set(find_name(p.name, text))
+        for sp in spans:
+            claims.setdefault(sp, []).append((p, sp in own))
+    lost = set()  # (performer, span) pairs that no longer count
+    unowned = []  # (span, claimants) matched only as an alias of several
+    for sp, claimants in claims.items():
+        if len(claimants) < 2:
+            continue
+        owners = [p for p, own in claimants if own]
+        lost.update((id(p), sp) for p, own in claimants if not (owners and own))
+        if not owners:
+            unowned.append((sp, [p for p, _ in claimants]))
+    kept = []
+    for p, spans in performers:
+        spans = [sp for sp in spans if (id(p), sp) not in lost]
+        if spans:
+            kept.append((p, spans))
+    kept_ids = {id(p) for p, _ in kept}
+    ambiguous = []
+    for sp, claimants in unowned:
+        if any(id(p) in kept_ids for p in claimants):
+            continue  # one of them is in the scene anyway; that settles it
+        log(f'"{text[sp[0]:sp[1]]}" is an alias of {", ".join(p.name for p in claimants)}; '
+            "skipped, as it could be any of them", "warning")
+        ambiguous += [p.name for p in claimants]
+    return kept, _unique(ambiguous)
+
+
 def log_performer_matches(performers, text, use_aliases=True):
     """Logs the text each performer was matched on, and the alias when it
     wasn't their name, so an unexpected match can be traced to its cause."""
@@ -636,8 +675,11 @@ def scrape_path(path, library, options=None):
         else:
             studio_name, studio_names = None, []
     performers = outside_studio(performers, match_text, studio_names)
+    performers, ambiguous = resolve_shared_matches(performers, match_text)
     log_performer_matches(performers, match_text, use_aliases)
     tags = [t.name for t, _ in outside_studio(tags, match_text, studio_names)]
+    if ambiguous and options["performer_review_tag"]:
+        tags.append(options["performer_review_tag"])
 
     if series_name:
         result["title"] = series_name.title

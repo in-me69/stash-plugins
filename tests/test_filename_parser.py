@@ -106,6 +106,31 @@ class NameMatchingTest(unittest.TestCase):
         result = scrape_path("/v/Other/Yonitale Solo.mp4", Library(library.performers, [], []))
         self.assertEqual(names(result, "performers"), ["Angelina Ballerina"])
 
+    def test_alias_shared_by_several_performers(self):
+        # A folder "Gracie" that is an alias of several performers.
+        library = Library(
+            performers=[Entity("Angelina Ballerina", ["Marion", "Marion Y", "Gracie", "Gracie A"]),
+                        Entity("Grace Noel", ["Gracie"]), Entity("Gracie Glam", ["Gracie"]),
+                        Entity("Gracie Green", ["Gracie"])],
+            studios=[Entity("Yonitale")],
+            tags=[],
+        )
+        # Nothing says which one is meant: none of them, and a review tag.
+        result = scrape_path("/v/Gracie/clip.mp4", library)
+        self.assertNotIn("performers", result)
+        self.assertEqual(names(result, "tags"), ["Performer Needs Review"])
+        result = scrape_path("/v/Gracie/clip.mp4", library, {"performer_review_tag": ""})
+        self.assertNotIn("tags", result)
+        # One of them matched elsewhere on their own is kept, which settles it.
+        result = scrape_path("/v/Gracie/yonitale.15.08.10.marion.y.savage.1080p.mp4", library)
+        self.assertEqual(names(result, "performers"), ["Angelina Ballerina"])
+        self.assertEqual(names(result, "tags"), ["Date Needs Review"])
+        # A performer whose own name it is wins over the aliases.
+        library.performers.append(Entity("Gracie"))
+        result = scrape_path("/v/Gracie/clip.mp4", library)
+        self.assertEqual(names(result, "performers"), ["Gracie"])
+        self.assertNotIn("tags", result)
+
     def test_longer_performer_name_wins_over_one_inside_it(self):
         library = Library(
             performers=[Entity("Venus"), Entity("Venus Afrodita"), Entity("Candela X")],

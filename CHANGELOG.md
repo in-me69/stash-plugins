@@ -7,6 +7,7 @@ To see what changed since the version you have installed, compare it with the en
 ## Filename Parser (scraper)
 
 ### 0.7.1 — 2026-10-14
+- Text that is an alias of several performers, such as a folder `Gracie`, no longer adds all of them. A performer whose own name it is wins. Otherwise none of them is added, unless one also matched elsewhere in the path, and the scene gets the new `performer_review_tag` (`Performer Needs Review`).
 - A performer with the studio's name as an alias, such as the site they were credited on, is no longer added to every scene from that studio. A performer whose own name is the studio's name still is.
 - The log shows what each performer was matched on, and which alias, so an unexpected match can be traced.
 
