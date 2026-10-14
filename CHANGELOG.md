@@ -32,6 +32,9 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Folder Media (plugin)
 
+### 0.3.1 — 2026-10-14
+- The project moved to https://github.com/in-me69/stash-plugins. Nothing else changed; reinstall from there.
+
 ### 0.3.0 — 2026-10-14 (#12)
 - A new **Shrink previews** setting, off by default. Teasers are converted with ffmpeg into short, small previews instead of being copied as they are: the first **Preview length** seconds (default 10), at most 640 px wide, H.264, with sound only if Stash's preview audio setting is on. If ffmpeg is missing or fails, the teaser is copied as before.
 - When a preview is replaced, the scene's old animated `.webp` is deleted, so Stash's **Generate** rebuilds it from the new preview.
@@ -44,6 +47,9 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Scene Reset (plugin)
 
+### 0.3.1 — 2026-10-14
+- The project moved to https://github.com/in-me69/stash-plugins. Nothing else changed; reinstall from there.
+
 ### 0.3.0 — 2026-10-12 (#11)
 - **Reset metadata…** is also in the **…** menu on each scene's own page.
 
@@ -54,6 +60,9 @@ To see what changed since the version you have installed, compare it with the en
 - First version. **Reset metadata…** in the scene list menu clears the selected scenes' metadata and regenerates their covers.
 
 ## Stash-box Linker (plugin)
+
+### 0.1.1 — 2026-10-14
+- The project moved to https://github.com/in-me69/stash-plugins. Nothing else changed; reinstall from there.
 
 ### 0.1.0 — 2026-10-12 (#8)
 - First version. When a studio or performer is linked to one stash-box, the plugin finds the same one on your other stash-boxes and adds those IDs. Matches it isn't sure of get a review tag instead.

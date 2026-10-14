@@ -1,6 +1,6 @@
 name: Stash-box Linker
 description: When a studio or performer is linked to one stash-box (e.g. StashDB), finds the same one on your other stash-boxes (e.g. ThePornDB) and adds those IDs too. Uncertain matches are tagged for review instead.
-version: 0.1.0
+version: 0.1.1
 url: https://github.com/in-me69/stash-plugins
 exec:
   - python

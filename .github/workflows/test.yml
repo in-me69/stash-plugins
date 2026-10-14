@@ -1,5 +1,9 @@
 name: test
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # Lets the publish workflow run the tests before building.
+  workflow_call:
 jobs:
   test:
     runs-on: ubuntu-latest

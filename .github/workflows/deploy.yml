@@ -1,0 +1,55 @@
+# Publishes the plugin and scraper source indexes to GitHub Pages, so Stash
+# can install and update them. Based on Stash's plugins-repo-template.
+name: Publish to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugins/**'
+      - 'scrapers/**'
+      - 'build_site.py'
+      - '.github/workflows/deploy.yml'
+  # Allows running this workflow by hand from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One publish at a time; a newer push replaces a waiting one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Never publish a version whose tests fail.
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: package versions include the last commit to change them.
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - run: python build_site.py _site/${{ github.ref_name }}
+      - uses: actions/upload-pages-artifact@v5
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}main/index.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
