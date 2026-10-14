@@ -29,6 +29,16 @@ LIBRARY = Library(
 )
 
 
+# Each scrape logs its performer matches; keep that out of the test output.
+_log_performer_matches = FilenameParser.log_performer_matches
+
+
+def setUpModule():
+    patcher = mock.patch.object(FilenameParser, "log_performer_matches")
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 def names(result, key):
     return [x["name"] for x in result.get(key, [])]
 
@@ -77,6 +87,24 @@ class NameMatchingTest(unittest.TestCase):
         result = scrape_path("/v/Bougie BB/Pool Day.mp4", Library([Entity("Bougie BB")], [Entity("Bougie BB")], []))
         self.assertEqual(names(result, "performers"), ["Bougie BB"])
         self.assertEqual(result["studio"], {"name": "Bougie BB"})
+
+    def test_alias_that_is_the_studio_name_does_not_count(self):
+        # Stash-boxes often list the site a performer was credited on as an
+        # alias; that alone mustn't add them to every scene from the site.
+        library = Library(
+            performers=[Entity("Angelina Ballerina", ["Yonitale"]), Entity("Marion")],
+            studios=[Entity("Yonitale")],
+            tags=[],
+        )
+        for path in ("/v/yonitale.15.08.10.marion.y.savage.1080p.mp4",
+                     "/v/Yonitale/yonitale.15.08.10.marion.y.savage.1080p.mp4",
+                     "/v/[Yonitale] Marion Y Savage.mp4"):
+            result = scrape_path(path, library)
+            self.assertEqual(result["studio"], {"name": "Yonitale"}, path)
+            self.assertEqual(names(result, "performers"), ["Marion"], path)
+        # The alias still counts where it appears apart from the studio name.
+        result = scrape_path("/v/Other/Yonitale Solo.mp4", Library(library.performers, [], []))
+        self.assertEqual(names(result, "performers"), ["Angelina Ballerina"])
 
     def test_longer_performer_name_wins_over_one_inside_it(self):
         library = Library(
@@ -318,6 +346,22 @@ class SeriesDatedNameTest(unittest.TestCase):
 
 
 class LogTest(unittest.TestCase):
+    def test_performer_matches_are_logged_with_the_alias_used(self):
+        import io
+        from contextlib import redirect_stderr
+        text = "/v/Ally.S.and.Bob.Jones"
+        performers = FilenameParser.match_performers(LIBRARY, text)
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            _log_performer_matches(performers, text)
+        self.assertEqual(
+            buffer.getvalue().splitlines(),
+            [
+                '\x01i\x02[FilenameParser] Performer Alice Smith: matched "Ally.S" (alias "Ally S")',
+                '\x01i\x02[FilenameParser] Performer Bob Jones: matched "Bob.Jones"',
+            ],
+        )
+
     def test_lines_carry_stash_log_level(self):
         import io
         from contextlib import redirect_stderr

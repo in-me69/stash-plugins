@@ -6,6 +6,10 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Filename Parser (scraper)
 
+### 0.7.1 — 2026-10-14
+- A performer with the studio's name as an alias, such as the site they were credited on, is no longer added to every scene from that studio. A performer whose own name is the studio's name still is.
+- The log shows what each performer was matched on, and which alias, so an unexpected match can be traced.
+
 ### 0.7.0 — 2026-10-08 (#6)
 - Performers are also matched by their aliases. The new `match_performer_aliases` setting turns this off, and aliases shorter than 3 characters are never matched.
 - A performer whose name is the whole studio name, such as a performer with their own studio, is kept.

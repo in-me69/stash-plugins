@@ -197,15 +197,22 @@ def outside_studio(matches, text, studio_names):
     "Star" within "[California Star Productions]". A match still counts if it
     also appears somewhere else in the path, or if it's the studio's whole
     name: a performer releasing their own content often has a studio of the
-    same name, and then both apply."""
+    same name, and then both apply. That exception is for the entity's own
+    name only, not an alias: stash-boxes often list the site a performer was
+    credited on as an alias, and that alone doesn't make them the studio."""
     blocked = [span for n in studio_names for span in find_name(n, text)]
 
-    def inside(sp):
-        return any(s <= sp[0] and sp[1] <= e and (e - s) > (sp[1] - sp[0]) for s, e in blocked)
+    def inside(sp, own_spans):
+        for s, e in blocked:
+            if s <= sp[0] and sp[1] <= e:
+                if (e - s) > (sp[1] - sp[0]) or sp not in own_spans:
+                    return True
+        return False
 
     kept = []
     for entity, spans in matches:
-        spans = [sp for sp in spans if not inside(sp)]
+        own_spans = find_name(entity.name, text)
+        spans = [sp for sp in spans if not inside(sp, own_spans)]
         if spans:
             kept.append((entity, spans))
     return kept
@@ -576,6 +583,19 @@ def _unique(names):
     return out
 
 
+def log_performer_matches(performers, text, use_aliases=True):
+    """Logs the text each performer was matched on, and the alias when it
+    wasn't their name, so an unexpected match can be traced to its cause."""
+    for p, spans in performers:
+        found = []
+        for n in performer_names(p, use_aliases):
+            for sp in find_name(n, text):
+                if sp in spans:
+                    via = "" if n == p.name else f' (alias "{n}")'
+                    found.append(f'"{text[sp[0]:sp[1]]}"{via}')
+        log(f"Performer {p.name}: matched {', '.join(_unique(found))}")
+
+
 def scrape_path(path, library, options=None):
     options = {**DEFAULT_CONFIG, **(options or {})}
     path = path.replace("\\", "/")
@@ -616,6 +636,7 @@ def scrape_path(path, library, options=None):
         else:
             studio_name, studio_names = None, []
     performers = outside_studio(performers, match_text, studio_names)
+    log_performer_matches(performers, match_text, use_aliases)
     tags = [t.name for t, _ in outside_studio(tags, match_text, studio_names)]
 
     if series_name:
