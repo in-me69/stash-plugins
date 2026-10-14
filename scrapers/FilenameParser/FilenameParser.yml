@@ -7,4 +7,5 @@ sceneByFragment:
   script:
     - python
     - FilenameParser.py
-# Last Updated October 07, 2026
+# Version: 0.7.0
+# Last Updated October 08, 2026

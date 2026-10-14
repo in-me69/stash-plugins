@@ -175,6 +175,8 @@ class PluginRunTest(unittest.TestCase):
     def setUp(self):
         self.server = HTTPServer(("127.0.0.1", 0), FakeStash)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        # Cleanups run last-in-first-out: stop serving, then close the socket.
+        self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         FakeStash.entities, FakeStash.searches, FakeStash.tags = {}, {}, {}
         FakeStash.updates, FakeStash.queries, FakeStash.plugin_config = [], [], {}

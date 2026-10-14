@@ -1,6 +1,6 @@
 name: Scene Reset
 description: Adds "Reset metadata…" to the scene list menu and to the menu on each scene's page. Removes the title, studio, performers, tags, stash-box IDs and other metadata from the selected scenes (e.g. after a wrong Identify) and resets their covers (from a folder image if the Folder Media plugin finds one, otherwise a new screenshot).
-version: 0.1.0
+version: 0.3.0
 url: https://github.com/in-me69/stash-plugins
 exec:
   - python

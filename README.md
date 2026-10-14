@@ -7,6 +7,8 @@ Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
 - [Stash-box Linker](#stash-box-linker-plugin): a plugin that links studios and performers to the same entry on all your stash-boxes, e.g. StashDB and ThePornDB.
 - [Scene Reset](#scene-reset-plugin): a plugin that adds **Reset metadata…** to the scene list menu, to undo a wrong Identify.
 
+Each one has its own version number. Plugin versions show under **Settings > Plugins** in Stash, and the scraper's is in a comment at the bottom of its `.yml` file. To see what changed since the version you have, check [CHANGELOG.md](CHANGELOG.md).
+
 ## Filename Parser
 
 A scene scraper that fills in metadata from the scene's file path:

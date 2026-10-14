@@ -194,6 +194,8 @@ class PluginRunTest(FolderTest):
         super().setUp()
         self.server = HTTPServer(("127.0.0.1", 0), FakeStash)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        # Cleanups run last-in-first-out: stop serving, then close the socket.
+        self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.generated = os.path.join(self.tmp.name, "generated")
         FakeStash.scenes, FakeStash.updates, FakeStash.cookies = {}, [], []
