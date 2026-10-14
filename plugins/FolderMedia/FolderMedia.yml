@@ -1,6 +1,6 @@
 name: Folder Media
 description: Uses a cover/poster image and a teaser/preview/trailer video next to a video as the scene's cover and preview, instead of generating them. Only when the video is the only one in its folder.
-version: 0.3.0
+version: 0.3.1
 url: https://github.com/in-me69/stash-plugins
 exec:
   - python

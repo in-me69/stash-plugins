@@ -1,4 +1,4 @@
-# stash-scrapers
+# stash-plugins
 
 Custom scrapers and plugins for [Stash](https://github.com/stashapp/stash).
 
