@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
     "url": "http://localhost:9999",
     "api_key": "",
     "review_tag": "Date Needs Review",
+    "performer_review_tag": "Performer Needs Review",
     "two_digit_year_order": "auto",
     "match_scope": "path",
     "match_performer_aliases": "true",
@@ -197,15 +198,22 @@ def outside_studio(matches, text, studio_names):
     "Star" within "[California Star Productions]". A match still counts if it
     also appears somewhere else in the path, or if it's the studio's whole
     name: a performer releasing their own content often has a studio of the
-    same name, and then both apply."""
+    same name, and then both apply. That exception is for the entity's own
+    name only, not an alias: stash-boxes often list the site a performer was
+    credited on as an alias, and that alone doesn't make them the studio."""
     blocked = [span for n in studio_names for span in find_name(n, text)]
 
-    def inside(sp):
-        return any(s <= sp[0] and sp[1] <= e and (e - s) > (sp[1] - sp[0]) for s, e in blocked)
+    def inside(sp, own_spans):
+        for s, e in blocked:
+            if s <= sp[0] and sp[1] <= e:
+                if (e - s) > (sp[1] - sp[0]) or sp not in own_spans:
+                    return True
+        return False
 
     kept = []
     for entity, spans in matches:
-        spans = [sp for sp in spans if not inside(sp)]
+        own_spans = find_name(entity.name, text)
+        spans = [sp for sp in spans if not inside(sp, own_spans)]
         if spans:
             kept.append((entity, spans))
     return kept
@@ -576,6 +584,57 @@ def _unique(names):
     return out
 
 
+def resolve_shared_matches(performers, text):
+    """Settles text matched by more than one performer, e.g. a folder
+    "Gracie" that is an alias of several performers. A performer whose own
+    name it is keeps it and the alias matches are dropped. When it's only an
+    alias of them all, it doesn't count for any of them, but a performer with
+    another match of their own is still kept. If none of them is, nothing
+    says which one is meant, so the performers are reported as ambiguous.
+    Returns (performers, names of the ambiguous performers)."""
+    claims = {}
+    for p, spans in performers:
+        own = set(find_name(p.name, text))
+        for sp in spans:
+            claims.setdefault(sp, []).append((p, sp in own))
+    lost = set()  # (performer, span) pairs that no longer count
+    unowned = []  # (span, claimants) matched only as an alias of several
+    for sp, claimants in claims.items():
+        if len(claimants) < 2:
+            continue
+        owners = [p for p, own in claimants if own]
+        lost.update((id(p), sp) for p, own in claimants if not (owners and own))
+        if not owners:
+            unowned.append((sp, [p for p, _ in claimants]))
+    kept = []
+    for p, spans in performers:
+        spans = [sp for sp in spans if (id(p), sp) not in lost]
+        if spans:
+            kept.append((p, spans))
+    kept_ids = {id(p) for p, _ in kept}
+    ambiguous = []
+    for sp, claimants in unowned:
+        if any(id(p) in kept_ids for p in claimants):
+            continue  # one of them is in the scene anyway; that settles it
+        log(f'"{text[sp[0]:sp[1]]}" is an alias of {", ".join(p.name for p in claimants)}; '
+            "skipped, as it could be any of them", "warning")
+        ambiguous += [p.name for p in claimants]
+    return kept, _unique(ambiguous)
+
+
+def log_performer_matches(performers, text, use_aliases=True):
+    """Logs the text each performer was matched on, and the alias when it
+    wasn't their name, so an unexpected match can be traced to its cause."""
+    for p, spans in performers:
+        found = []
+        for n in performer_names(p, use_aliases):
+            for sp in find_name(n, text):
+                if sp in spans:
+                    via = "" if n == p.name else f' (alias "{n}")'
+                    found.append(f'"{text[sp[0]:sp[1]]}"{via}')
+        log(f"Performer {p.name}: matched {', '.join(_unique(found))}")
+
+
 def scrape_path(path, library, options=None):
     options = {**DEFAULT_CONFIG, **(options or {})}
     path = path.replace("\\", "/")
@@ -616,7 +675,11 @@ def scrape_path(path, library, options=None):
         else:
             studio_name, studio_names = None, []
     performers = outside_studio(performers, match_text, studio_names)
+    performers, ambiguous = resolve_shared_matches(performers, match_text)
+    log_performer_matches(performers, match_text, use_aliases)
     tags = [t.name for t, _ in outside_studio(tags, match_text, studio_names)]
+    if ambiguous and options["performer_review_tag"]:
+        tags.append(options["performer_review_tag"])
 
     if series_name:
         result["title"] = series_name.title
