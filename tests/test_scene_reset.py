@@ -26,8 +26,15 @@ class ParseSceneIdsTest(unittest.TestCase):
             self.assertEqual(parse_scene_ids(value), [], value)
 
 
+# SceneUpdateInput's fields in Stash v0.31 (no production_date yet).
+RELEASED_FIELDS = ["id", "title", "code", "details", "director", "url", "urls", "date", "rating100",
+                   "organized", "studio_id", "gallery_ids", "performer_ids", "groups", "movies",
+                   "tag_ids", "cover_image", "stash_ids", "resume_time", "play_duration"]
+
+
 class FakeStash(BaseHTTPRequestHandler):
     calls = []
+    scene_fields = RELEASED_FIELDS  # None: introspection fails
     fail_ids = set()
     plugins = []  # [{"id", "enabled"}]
     scene_paths = {}  # id -> video path, for Folder Media's findScene
@@ -39,7 +46,21 @@ class FakeStash(BaseHTTPRequestHandler):
         if "input" in v:  # Folder Media's code names its variable "input"
             v = {"i": v["input"]}
         FakeStash.calls.append((q, v))
-        if "plugins(" in q:  # Folder Media's own settings
+        if "__type" in q:
+            if FakeStash.scene_fields is None:
+                payload = {"errors": [{"message": "introspection disabled"}]}
+            else:
+                payload = {"data": {"__type": {"inputFields": [{"name": n} for n in FakeStash.scene_fields]}}}
+        elif "sceneUpdate" in q and set(v["i"]) - set(FakeStash.scene_fields or RELEASED_FIELDS):
+            # Like gqlgen: an unknown input field fails validation with a 422.
+            unknown = sorted(set(v["i"]) - set(FakeStash.scene_fields or RELEASED_FIELDS))[0]
+            out = json.dumps({"errors": [{"message": f"unknown field {unknown}"}]}).encode()
+            self.send_response(422)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(out)
+            return
+        elif "plugins(" in q:  # Folder Media's own settings
             payload = {"data": {"configuration": {"plugins": {}}}}
         elif "plugins" in q:
             payload = {"data": {"plugins": FakeStash.plugins}}
@@ -76,6 +97,7 @@ class PluginRunTest(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         FakeStash.calls, FakeStash.fail_ids, FakeStash.plugins, FakeStash.scene_paths = [], set(), [], {}
+        FakeStash.scene_fields = RELEASED_FIELDS
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         FakeStash.generated = os.path.join(self.tmp.name, "generated")
@@ -110,7 +132,8 @@ class PluginRunTest(unittest.TestCase):
 
     def test_resets_each_scene_then_regenerates_covers(self):
         result, stderr = self.run_plugin({"scene_ids": "3,5"})
-        self.assertEqual(self.updates(), [{"id": "3", **RESET_FIELDS}, {"id": "5", **RESET_FIELDS}])
+        fields = {k: v for k, v in RESET_FIELDS.items() if k != "production_date"}
+        self.assertEqual(self.updates(), [{"id": "3", **fields}, {"id": "5", **fields}])
         self.assertEqual(self.generates(), [{"covers": True, "overwrite": True, "sceneIDs": ["3", "5"]}])
         self.assertEqual(result["output"], "Reset 2 of 2 scenes; cover generation queued for 2")
         self.assertIn("\x01p\x021.0", stderr)
@@ -127,6 +150,24 @@ class PluginRunTest(unittest.TestCase):
         # Kept: things a reset shouldn't touch.
         for field in ("rating100", "gallery_ids", "play_count", "o_counter", "cover_image"):
             self.assertNotIn(field, cleared)
+
+    def test_fields_this_stash_lacks_are_left_out(self):
+        # production_date isn't in any Stash release yet; sending it got a 422.
+        self.run_plugin({"scene_ids": "3"})
+        self.assertNotIn("production_date", self.updates()[0])
+        FakeStash.calls = []
+        FakeStash.scene_fields = RELEASED_FIELDS + ["production_date"]
+        self.run_plugin({"scene_ids": "3"})
+        self.assertEqual(self.updates(), [{"id": "3", **RESET_FIELDS}])
+
+    def test_sends_every_field_when_the_schema_cant_be_read(self):
+        FakeStash.scene_fields = None
+        result, stderr = self.run_plugin({"scene_ids": "3"})
+        self.assertEqual(self.updates(), [{"id": "3", **RESET_FIELDS}])
+        # The fake rejects production_date, and the log says why.
+        self.assertEqual(result["output"], "Reset 0 of 1 scenes")
+        self.assertIn("couldn't reset: HTTP 422 ", stderr)
+        self.assertIn("unknown field production_date", stderr)
 
     def test_without_scene_ids_does_nothing(self):
         for args in ({}, {"scene_ids": ""}, {"scene_ids": "not-an-id"}):

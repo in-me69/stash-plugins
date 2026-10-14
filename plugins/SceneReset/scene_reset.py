@@ -84,8 +84,13 @@ class Stash:
             import ssl
             # Stash's own HTTPS cert is usually self-signed; it's the local machine.
             context = ssl._create_unverified_context()
-        with urllib.request.urlopen(request, timeout=60, context=context) as response:
-            payload = json.load(response)
+        try:
+            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as e:
+            # Stash puts the reason (e.g. an unknown input field) in the body.
+            detail = e.read().decode("utf-8", "replace").strip()
+            raise RuntimeError(f"HTTP {e.code} {e.reason}: {detail[:500]}") from e
         if payload.get("errors"):
             raise RuntimeError(f"GraphQL error: {payload['errors']}")
         return payload["data"]
@@ -170,16 +175,35 @@ def parse_scene_ids(value):
     return ids
 
 
+def supported_reset_fields(stash):
+    """RESET_FIELDS minus any this Stash version's SceneUpdateInput doesn't
+    have (production_date, for one, isn't in every release); sending an
+    unknown field makes Stash reject the whole update."""
+    try:
+        data = stash.query('{ __type(name: "SceneUpdateInput") { inputFields { name } } }')
+        names = {f["name"] for f in (data.get("__type") or {}).get("inputFields") or []}
+    except (RuntimeError, urllib.error.URLError, KeyError, TypeError) as e:
+        log(f"Couldn't check which scene fields Stash supports: {e}", "debug")
+        return dict(RESET_FIELDS)
+    if not names:
+        return dict(RESET_FIELDS)
+    skipped = sorted(set(RESET_FIELDS) - names)
+    if skipped:
+        log(f"Not supported by this Stash version, left alone: {', '.join(skipped)}", "debug")
+    return {k: v for k, v in RESET_FIELDS.items() if k in names}
+
+
 def reset_scenes(stash, scene_ids, regenerate_covers=True, server_connection=None, plugin_dir=PLUGIN_DIR):
     """Clears the scenes' metadata, then restores folder covers (via Folder
     Media, if enabled) and queues cover generation for the rest. Returns a
     summary string."""
     reset = []
+    fields = supported_reset_fields(stash)
     for i, scene_id in enumerate(scene_ids):
         try:
             stash.query(
                 "mutation($i: SceneUpdateInput!) { sceneUpdate(input: $i) { id } }",
-                {"i": {"id": scene_id, **RESET_FIELDS}},
+                {"i": {"id": scene_id, **fields}},
             )
             reset.append(scene_id)
             log(f"Scene {scene_id}: metadata reset")
