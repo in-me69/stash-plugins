@@ -32,6 +32,10 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Folder Media (plugin)
 
+### 0.3.0 — 2026-10-14 (#12)
+- A new **Shrink previews** setting, off by default. Teasers are converted with ffmpeg into short, small previews instead of being copied as they are: the first **Preview length** seconds (default 10), at most 640 px wide, H.264, with sound only if Stash's preview audio setting is on. If ffmpeg is missing or fails, the teaser is copied as before.
+- When a preview is replaced, the scene's old animated `.webp` is deleted, so Stash's **Generate** rebuilds it from the new preview.
+
 ### 0.2.0 — 2026-10-12 (#11)
 - The cover and preview file names are now settings, as comma-separated names or patterns in order of preference.
 

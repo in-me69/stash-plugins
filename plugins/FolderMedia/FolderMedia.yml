@@ -1,6 +1,6 @@
 name: Folder Media
 description: Uses a cover/poster image and a teaser/preview/trailer video next to a video as the scene's cover and preview, instead of generating them. Only when the video is the only one in its folder.
-version: 0.2.0
+version: 0.3.0
 url: https://github.com/in-me69/stash-plugins
 exec:
   - python
@@ -15,6 +15,14 @@ settings:
     displayName: Preview video names
     description: 'Comma-separated, in order of preference, as above. These files don''t count as a second video in the folder. Default: teaser, preview, trailer'
     type: STRING
+  shrinkPreviews:
+    displayName: Shrink previews
+    description: Convert teasers with ffmpeg into short, small previews (at most 640px wide, H.264) instead of copying them as they are. Keeps the hover preview, and any animated .webp Stash makes from it, small. Uses the ffmpeg Stash uses.
+    type: BOOLEAN
+  previewSeconds:
+    displayName: Preview length (seconds)
+    description: 'When shrinking, how much of the start of the teaser to keep. Default: 10 (Stash''s own previews are about 9)'
+    type: NUMBER
 hooks:
   - name: Set cover and preview from folder media
     description: When a scan adds a scene, set its cover and preview video from cover/poster and teaser/preview/trailer files in the same folder.

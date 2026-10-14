@@ -12,7 +12,12 @@ scan was run with its overwrite option).
 
 Stash has no API for setting a preview. It stores each scene's preview at
 <generated>/screenshots/<file hash>.mp4 and only generates one if that file
-is missing, so the teaser is copied there.
+is missing, so the teaser is copied there. With the "Shrink previews"
+setting on, it's converted with ffmpeg instead: the first few seconds (the
+"Preview length" setting), at most 640px wide (Stash's own preview width),
+H.264, with sound only if Stash's preview audio setting is on. Any existing
+animated .webp preview for the scene is deleted when the preview is
+replaced, so Stash's Generate rebuilds it from the new one.
 
 For now this only applies when the video is the only video in its folder
 (teasers aside), so the files clearly belong to it. Names are matched
@@ -31,6 +36,7 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -42,6 +48,11 @@ DEFAULT_COVER_NAMES = "cover, poster"
 DEFAULT_PREVIEW_NAMES = "teaser, preview, trailer"
 # Browsers play these; used first if a preview exists in several formats.
 PREFERRED_PREVIEW_EXTENSIONS = ("mp4", "m4v", "webm")
+# Shrinking teasers: Stash's own preview width, and the default length kept.
+PREVIEW_WIDTH = 640
+DEFAULT_PREVIEW_SECONDS = 10
+MAX_PREVIEW_SECONDS = 600
+FFMPEG_TIMEOUT_SECONDS = 600
 
 # Used if Stash's own extension lists can't be read.
 DEFAULT_VIDEO_EXTENSIONS = [
@@ -156,6 +167,71 @@ def find_folder_media(video_path, video_extensions, image_extensions,
     return cover, preview
 
 
+def find_ffmpeg(configured="", config_dir=""):
+    """The ffmpeg Stash uses: its ffmpeg path setting, else ffmpeg on the
+    PATH, else the copy Stash downloads into its config folder. None if
+    there's none."""
+    if configured:
+        if os.path.isfile(configured):
+            return configured
+        found = shutil.which(configured)
+        if found:
+            return found
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        path = os.path.join(config_dir or "", name)
+        if config_dir and os.path.isfile(path):
+            return path
+    return None
+
+
+def shrink_command(ffmpeg, source, destination, seconds, audio, preset):
+    """ffmpeg arguments turning a teaser into a Stash-sized preview: the
+    first `seconds`, at most PREVIEW_WIDTH wide, H.264 MP4 that starts
+    playing before it's fully loaded, with AAC sound only if `audio`."""
+    cmd = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-i", source,
+        "-t", f"{seconds:g}",
+        "-map", "0:v:0",
+    ]
+    if audio:
+        cmd += ["-map", "0:a:0?"]  # "?": fine if the teaser has no sound
+    cmd += [
+        "-vf", f"scale='min({PREVIEW_WIDTH},iw)':-2",
+        "-c:v", "libx264", "-preset", preset or "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-profile:v", "high",
+        "-movflags", "+faststart",
+    ]
+    cmd += ["-c:a", "aac", "-b:a", "128k"] if audio else ["-an"]
+    return cmd + ["-f", "mp4", destination]
+
+
+def shrink_into_place(settings, source, destination):
+    """Converts source into a small preview at destination, via a temporary
+    file so Stash never serves a half-written one. Raises RuntimeError if
+    ffmpeg fails."""
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=os.path.dirname(destination), suffix=".tmp.mp4")
+    os.close(fd)
+    try:
+        cmd = shrink_command(settings.ffmpeg, source, temp, settings.preview_seconds,
+                             settings.preview_audio, settings.preview_preset)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"ffmpeg took longer than {FFMPEG_TIMEOUT_SECONDS}s")
+        if result.returncode != 0 or not os.path.getsize(temp):
+            error = (result.stderr or "").strip().splitlines()[-3:]
+            raise RuntimeError(f"ffmpeg failed ({result.returncode}): {' / '.join(error) or 'no output'}")
+        os.replace(temp, destination)
+    finally:
+        if os.path.exists(temp):
+            os.remove(temp)
+
+
 def image_data_uri(path):
     mime = mimetypes.guess_type(path)[0] or "image/jpeg"
     with open(path, "rb") as f:
@@ -184,16 +260,42 @@ class Settings:
     """The parts of Stash's configuration this plugin needs."""
 
     def __init__(self, video_extensions, image_extensions, generated_path, hash_algorithm,
-                 cover_patterns=DEFAULT_COVER_PATTERNS, preview_patterns=DEFAULT_PREVIEW_PATTERNS):
+                 cover_patterns=DEFAULT_COVER_PATTERNS, preview_patterns=DEFAULT_PREVIEW_PATTERNS,
+                 shrink_previews=False, preview_seconds=DEFAULT_PREVIEW_SECONDS, preview_audio=False,
+                 preview_preset="veryfast", ffmpeg=None):
         self.video_extensions = video_extensions
         self.image_extensions = image_extensions
         self.generated_path = generated_path
         self.hash_algorithm = hash_algorithm  # "oshash" or "md5"
         self.cover_patterns = cover_patterns
         self.preview_patterns = preview_patterns
+        self.shrink_previews = shrink_previews
+        self.preview_seconds = preview_seconds
+        self.preview_audio = preview_audio  # Stash's own "preview audio" setting
+        self.preview_preset = preview_preset  # Stash's own preview encoding preset
+        self.ffmpeg = ffmpeg
 
     def preview_path(self, file_hash):
         return os.path.join(self.generated_path, "screenshots", f"{file_hash}.mp4")
+
+    def webp_path(self, file_hash):
+        return os.path.join(self.generated_path, "screenshots", f"{file_hash}.webp")
+
+
+def _as_bool(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def _as_seconds(value):
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PREVIEW_SECONDS
+    if seconds <= 0:
+        return DEFAULT_PREVIEW_SECONDS
+    return min(seconds, MAX_PREVIEW_SECONDS)
 
 
 class Stash:
@@ -235,12 +337,17 @@ class Stash:
 
     def settings(self):
         general = self.query(
-            "{ configuration { general { videoExtensions imageExtensions generatedPath videoFileNamingAlgorithm } } }"
+            "{ configuration { general { videoExtensions imageExtensions generatedPath videoFileNamingAlgorithm"
+            " ffmpegPath previewAudio previewPreset } } }"
         )["configuration"]["general"]
         generated = general.get("generatedPath") or ""
         if generated and not os.path.isabs(generated) and self.config_dir:
             generated = os.path.join(self.config_dir, generated)
         plugin = self.plugin_settings()
+        shrink = _as_bool(plugin.get("shrinkPreviews", False))
+        ffmpeg = find_ffmpeg(general.get("ffmpegPath") or "", self.config_dir) if shrink else None
+        if shrink and not ffmpeg:
+            log("Shrink previews is on but ffmpeg wasn't found; copying teasers as they are", "warning")
         return Settings(
             general.get("videoExtensions") or DEFAULT_VIDEO_EXTENSIONS,
             general.get("imageExtensions") or DEFAULT_IMAGE_EXTENSIONS,
@@ -248,6 +355,11 @@ class Stash:
             (general.get("videoFileNamingAlgorithm") or "OSHASH").lower(),
             NamePatterns(plugin.get("coverNames") or DEFAULT_COVER_NAMES, DEFAULT_COVER_NAMES),
             NamePatterns(plugin.get("previewNames") or DEFAULT_PREVIEW_NAMES, DEFAULT_PREVIEW_NAMES),
+            shrink_previews=shrink,
+            preview_seconds=_as_seconds(plugin.get("previewSeconds", DEFAULT_PREVIEW_SECONDS)),
+            preview_audio=bool(general.get("previewAudio")),
+            preview_preset=(general.get("previewPreset") or "veryfast").lower(),
+            ffmpeg=ffmpeg,
         )
 
     def plugin_settings(self):
@@ -258,7 +370,8 @@ class Stash:
         except (RuntimeError, KeyError, TypeError):
             return {}
         values = config.get(PLUGIN_ID) or {}
-        return {k: v for k, v in values.items() if isinstance(v, str) and v.strip()}
+        # Unset settings come back missing, null or "": treat them all as unset.
+        return {k: v for k, v in values.items() if v is not None and not (isinstance(v, str) and not v.strip())}
 
     _SCENE_FIELDS = "id files { path fingerprints { type value } }"
 
@@ -306,10 +419,24 @@ def apply_folder_media(stash, settings, scene):
         elif not file_hash:
             log(f"Scene {scene_id}: no {settings.hash_algorithm} hash yet, can't add preview", "warning")
         else:
-            if _extension(preview) not in PREFERRED_PREVIEW_EXTENSIONS:
-                log(f"Scene {scene_id}: {preview} may not play in browsers; mp4 (H.264) is safest", "warning")
-            copy_into_place(preview, settings.preview_path(file_hash))
-            done.append(f"preview from {preview}")
+            destination = settings.preview_path(file_hash)
+            shrunk = False
+            if settings.shrink_previews and settings.ffmpeg:
+                try:
+                    shrink_into_place(settings, preview, destination)
+                    shrunk = True
+                except (RuntimeError, OSError) as e:
+                    log(f"Scene {scene_id}: couldn't shrink {preview}, copying it instead: {e}", "warning")
+            if not shrunk:
+                if _extension(preview) not in PREFERRED_PREVIEW_EXTENSIONS:
+                    log(f"Scene {scene_id}: {preview} may not play in browsers; mp4 (H.264) is safest", "warning")
+                copy_into_place(preview, destination)
+            # An animated .webp made from the old preview would otherwise stay,
+            # and Stash's Generate (without overwrite) would never rebuild it.
+            webp = settings.webp_path(file_hash)
+            if os.path.exists(webp):
+                os.remove(webp)
+            done.append(f"preview from {preview}" + (f" (first {settings.preview_seconds:g}s, shrunk)" if shrunk else ""))
 
     for item in done:
         log(f"Scene {scene_id}: {item}")

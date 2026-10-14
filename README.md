@@ -206,8 +206,33 @@ The names are settings, under **Settings > Plugins > Folder Media**:
 
 - **How the copy works.** Stash has no API for setting a preview. It keeps each scene's preview at `<generated folder>/screenshots/<file hash>.mp4`, so the plugin **copies** the teaser there. The hash is the oshash or MD5 hash, depending on Stash's file naming setting.
 - **Disk space.** The copy uses as much space as the teaser itself.
-- **Size and format.** Stash's own previews are short, small and silent. A full-size teaser with sound still works, but takes longer to start when you hover. Use MP4 with H.264 for the widest browser support. The plugin logs a warning for other formats.
-- **What isn't replaced.** Only the video preview comes from the teaser. Stash's animated `.webp` preview and scrubber sprites, if you generate them, still come from the main video.
+- **Size and format.** Stash's own previews are short (about 9 seconds), small and silent. A full-size teaser copied as it is still works, but takes longer to start when you hover. Use MP4 with H.264 for the widest browser support; the plugin logs a warning for other formats. Better still, turn on **Shrink previews** (below).
+- **Scrubber sprites** still come from the main video.
+
+### Shrinking teasers
+
+Turn on **Shrink previews** under **Settings > Plugins > Folder Media** to have teasers converted instead of copied:
+
+- **Length:** only the first **Preview length** seconds are kept. The default is 10.
+- **Size:** at most 640 px wide, the same as Stash's own previews. Smaller teasers aren't enlarged.
+- **Format:** H.264 MP4, set up to start playing before it's fully loaded, using Stash's own preview encoding preset.
+- **Sound:** kept only if Stash's own **preview audio** setting is on.
+
+In a test with a 20-second 1080p teaser, the hover preview went from 12.5 MB to 0.5 MB.
+
+- **ffmpeg:** shrinking uses the same ffmpeg as Stash. That's the one set in Stash's ffmpeg path setting if there is one, otherwise ffmpeg from the system path or the copy in Stash's config folder.
+- **Fallbacks:** if ffmpeg isn't found, or can't read a teaser, the teaser is copied as it is and a warning is logged.
+- **Scan time:** converting takes a few seconds per teaser, and it happens while the scan waits.
+
+### Animated `.webp` previews
+
+Stash can also make an animated `.webp` version of each preview. It does this when you tick **Image previews** in Generate or in the scan options. It's mainly used in the scene wall view.
+
+- **Built from the teaser automatically.** Stash makes the `.webp` from the *preview video*, not from the main video. So once this plugin has put the teaser in place, Stash's normal image-preview generation turns the teaser into the `.webp`.
+- **At scan time:** if image previews are ticked in your scan options, this happens automatically.
+- **For existing scenes:** run **Generate** with **Image previews** ticked and **overwrite off**. With overwrite on, Stash first regenerates the video preview from the main video, replacing the teaser.
+- **Stale files are removed.** Whenever the plugin replaces a preview, it deletes that scene's old `.webp`, so Generate rebuilds it from the new preview.
+- **Keep them short.** Stash makes these `.webp` files lossless, so their size depends on length; in my test, 15 seconds of 640 px video came to almost 9 MB. If you use them, keep **Shrink previews** on with a short **Preview length**.
 
 ### How it avoids the generated versions
 

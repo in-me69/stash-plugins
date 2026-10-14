@@ -2,17 +2,20 @@ import base64
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "FolderMedia"))
 
 import folder_media  # noqa: E402
-from folder_media import NamePatterns, find_folder_media  # noqa: E402
+from folder_media import NamePatterns, Settings, find_folder_media  # noqa: E402
 
 VIDEO = ["mp4", "mkv", "webm"]
 IMAGE = ["jpg", "jpeg", "png", "webp"]
@@ -147,6 +150,7 @@ class FakeStash(BaseHTTPRequestHandler):
     generated = ""
     algorithm = "OSHASH"
     plugin_config = {}
+    general_extra = {}
     updates = []
     cookies = []
 
@@ -167,6 +171,7 @@ class FakeStash(BaseHTTPRequestHandler):
             data = {"configuration": {"general": {
                 "videoExtensions": VIDEO, "imageExtensions": IMAGE,
                 "generatedPath": FakeStash.generated, "videoFileNamingAlgorithm": FakeStash.algorithm,
+                **FakeStash.general_extra,
             }}}
         elif "findScenes" in query:
             data = {"findScenes": {"scenes": [FakeStash.scene_json(i) for i in FakeStash.scenes]}}
@@ -201,6 +206,7 @@ class PluginRunTest(FolderTest):
         FakeStash.scenes, FakeStash.updates, FakeStash.cookies = {}, [], []
         FakeStash.generated, FakeStash.algorithm = self.generated, "OSHASH"
         FakeStash.plugin_config = {}
+        FakeStash.general_extra = {}
 
     def run_plugin(self, args, server_connection=None):
         plugin_input = {
@@ -299,6 +305,37 @@ class PluginRunTest(FolderTest):
         with open(self.preview_file("abc123"), "rb") as f:
             self.assertEqual(f.read(), b"SAMPLE")
 
+    def test_replacing_a_preview_removes_the_old_webp(self):
+        video = self.touch("one/Scene.mp4", "one/teaser.mp4")
+        webp = os.path.join(self.generated, "screenshots", "abc123.webp")
+        os.makedirs(os.path.dirname(webp))
+        with open(webp, "wb") as f:
+            f.write(b"OLD")
+        FakeStash.scenes = {"7": (video, {"oshash": "abc123"})}
+        self.run_plugin({"hookContext": {"id": 7}})
+        self.assertFalse(os.path.exists(webp))
+
+    def test_webp_kept_when_no_preview_is_set(self):
+        video = self.touch("one/Scene.mp4", "one/cover.jpg")
+        webp = os.path.join(self.generated, "screenshots", "abc123.webp")
+        os.makedirs(os.path.dirname(webp))
+        open(webp, "wb").close()
+        FakeStash.scenes = {"7": (video, {"oshash": "abc123"})}
+        self.run_plugin({"hookContext": {"id": 7}})
+        self.assertTrue(os.path.exists(webp))
+
+    def test_shrink_on_without_ffmpeg_copies_and_warns(self):
+        FakeStash.plugin_config = {"FolderMedia": {"shrinkPreviews": True}}
+        video = self.touch("one/Scene.mp4")
+        self.touch("one/teaser.mp4", content=b"TEASER")
+        FakeStash.scenes = {"7": (video, {"oshash": "abc123"})}
+        with mock.patch.object(folder_media, "find_ffmpeg", return_value=None):
+            result, stderr = self.run_plugin({"hookContext": {"id": 7}})
+        self.assertIn("ffmpeg wasn't found", stderr)
+        with open(self.preview_file("abc123"), "rb") as f:
+            self.assertEqual(f.read(), b"TEASER")
+        self.assertNotIn("shrunk", result["output"])
+
     def test_task_updates_every_matching_scene(self):
         a = self.touch("a/A.mp4", "a/cover.jpg", "a/trailer.mp4")
         b = self.touch("b/B.mp4")
@@ -313,6 +350,120 @@ class PluginRunTest(FolderTest):
         self.assertEqual(sorted(os.listdir(os.path.join(self.generated, "screenshots"))), ["aaa.mp4", "ddd.mp4"])
         self.assertEqual(result["output"], "Set 1 covers and 2 previews from folder media")
         self.assertIn("\x01p\x021.0", stderr)  # progress reported to Stash
+
+
+class ShrinkSettingsTest(unittest.TestCase):
+    def test_command_without_audio(self):
+        cmd = folder_media.shrink_command("ffmpeg", "in.mkv", "out.mp4", 15.0, False, "fast")
+        self.assertEqual(cmd[:2], ["ffmpeg", "-hide_banner"])
+        self.assertIn("-an", cmd)
+        self.assertNotIn("0:a:0?", cmd)
+        self.assertEqual(cmd[cmd.index("-t") + 1], "15")
+        self.assertEqual(cmd[cmd.index("-preset") + 1], "fast")
+        self.assertEqual(cmd[cmd.index("-vf") + 1], "scale='min(640,iw)':-2")
+        self.assertEqual(cmd[-3:], ["-f", "mp4", "out.mp4"])
+
+    def test_command_with_audio(self):
+        cmd = folder_media.shrink_command("ffmpeg", "in.mkv", "out.mp4", 7.5, True, "")
+        self.assertIn("0:a:0?", cmd)
+        self.assertEqual(cmd[cmd.index("-c:a") + 1], "aac")
+        self.assertEqual(cmd[cmd.index("-t") + 1], "7.5")
+        self.assertEqual(cmd[cmd.index("-preset") + 1], "veryfast")
+
+    def test_setting_values(self):
+        for value, expected in ((True, True), ("true", True), ("on", True), (False, False), ("no", False), (None, False)):
+            self.assertIs(folder_media._as_bool(value), expected, value)
+        for value, expected in ((12, 12.0), ("7.5", 7.5), (0, 10), (-3, 10), ("x", 10), (None, 10), (99999, 600)):
+            self.assertEqual(folder_media._as_seconds(value), expected, value)
+
+    def test_find_ffmpeg_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            configured = os.path.join(tmp, "my-ffmpeg")
+            open(configured, "w").close()
+            in_config_dir = os.path.join(tmp, "ffmpeg")
+            open(in_config_dir, "w").close()
+            with mock.patch.object(folder_media.shutil, "which", return_value="/usr/bin/ffmpeg"):
+                self.assertEqual(folder_media.find_ffmpeg(configured, tmp), configured)
+                self.assertEqual(folder_media.find_ffmpeg("", tmp), "/usr/bin/ffmpeg")
+            with mock.patch.object(folder_media.shutil, "which", return_value=None):
+                self.assertEqual(folder_media.find_ffmpeg("", tmp), in_config_dir)
+                self.assertIsNone(folder_media.find_ffmpeg("", ""))
+
+
+def _ffmpeg_with_x264():
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or not shutil.which("ffprobe"):
+        return None
+    encoders = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    return ffmpeg if "libx264" in encoders else None
+
+
+@unittest.skipUnless(_ffmpeg_with_x264(), "needs ffmpeg with libx264 and ffprobe")
+class RealShrinkTest(FolderTest):
+    """Runs the real ffmpeg on a generated 20s 1920x1080 teaser with sound."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ffmpeg = _ffmpeg_with_x264()
+        cls.source_dir = tempfile.TemporaryDirectory()
+        cls.teaser = os.path.join(cls.source_dir.name, "teaser.mp4")
+        subprocess.run([
+            cls.ffmpeg, "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=25:duration=20",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=20",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", cls.teaser,
+        ], check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.source_dir.cleanup()
+
+    def probe(self, path):
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                              "stream=codec_type,codec_name,width,height:format=duration",
+                              "-of", "json", path], capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+
+    def settings(self, **kw):
+        return Settings(VIDEO, IMAGE, os.path.join(self.tmp.name, "generated"), "oshash",
+                        shrink_previews=True, ffmpeg=self.ffmpeg, preview_preset="ultrafast", **kw)
+
+    def run_apply(self, settings):
+        video = self.touch("Scene.mp4")
+        shutil.copyfile(self.teaser, self.path("teaser.mp4"))
+        scene = {"id": "1", "files": [{"path": video, "fingerprints": [{"type": "oshash", "value": "h1"}]}]}
+        with redirect_stderr(io.StringIO()) as stderr:
+            done = folder_media.apply_folder_media(None, settings, scene)
+        return done, stderr.getvalue(), settings.preview_path("h1")
+
+    def test_shrinks_to_length_and_width_without_sound(self):
+        done, _, out = self.run_apply(self.settings(preview_seconds=5))
+        info = self.probe(out)
+        video = [st for st in info["streams"] if st["codec_type"] == "video"][0]
+        self.assertEqual((video["codec_name"], video["width"], video["height"]), ("h264", 640, 360))
+        self.assertAlmostEqual(float(info["format"]["duration"]), 5.0, delta=0.5)
+        self.assertFalse([st for st in info["streams"] if st["codec_type"] == "audio"])
+        self.assertIn("(first 5s, shrunk)", done[0])
+        self.assertLess(os.path.getsize(out), os.path.getsize(self.teaser))
+        self.assertEqual(os.listdir(os.path.dirname(out)), ["h1.mp4"])  # no temp files left
+
+    def test_keeps_sound_when_stash_preview_audio_is_on(self):
+        _, _, out = self.run_apply(self.settings(preview_seconds=3, preview_audio=True))
+        audio = [st for st in self.probe(out)["streams"] if st["codec_type"] == "audio"]
+        self.assertEqual(audio[0]["codec_name"], "aac")
+
+    def test_unreadable_teaser_falls_back_to_copy(self):
+        video = self.touch("Scene.mp4")
+        self.touch("teaser.mp4", content=b"not really a video")
+        scene = {"id": "1", "files": [{"path": video, "fingerprints": [{"type": "oshash", "value": "h1"}]}]}
+        settings = self.settings()
+        with redirect_stderr(io.StringIO()) as stderr:
+            done = folder_media.apply_folder_media(None, settings, scene)
+        self.assertIn("couldn't shrink", stderr.getvalue())
+        with open(settings.preview_path("h1"), "rb") as f:
+            self.assertEqual(f.read(), b"not really a video")
+        self.assertNotIn("shrunk", done[0])
+        self.assertEqual(os.listdir(os.path.dirname(settings.preview_path("h1"))), ["h1.mp4"])
 
 
 if __name__ == "__main__":

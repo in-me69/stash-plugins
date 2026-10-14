@@ -8,4 +8,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
+      - run: pip install pyyaml
+      - run: sudo apt-get install -y --no-install-recommends ffmpeg || true
       - run: python -m unittest discover -s tests -v
