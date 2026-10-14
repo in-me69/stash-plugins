@@ -124,7 +124,7 @@ class NameMatchingTest(unittest.TestCase):
         # One of them matched elsewhere on their own is kept, which settles it.
         result = scrape_path("/v/Gracie/yonitale.15.08.10.marion.y.savage.1080p.mp4", library)
         self.assertEqual(names(result, "performers"), ["Angelina Ballerina"])
-        self.assertEqual(names(result, "tags"), ["Date Needs Review"])
+        self.assertNotIn("tags", result)
         # A performer whose own name it is wins over the aliases.
         library.performers.append(Entity("Gracie"))
         result = scrape_path("/v/Gracie/clip.mp4", library)
@@ -227,11 +227,15 @@ class DateTest(unittest.TestCase):
         self.assertEqual(self.date_of("03.04.2023"), ("2023", True))
 
     def test_two_digit_year(self):
-        # 23.04.15 could be 2023-04-15 or 2015-04-23: different years.
-        self.assertEqual(self.date_of("Site.23.04.15.Title"), (None, True))
-        self.assertEqual(self.date_of("Site.23.04.15.Title", two_digit_year_order="ymd"), ("2023-04-15", False))
+        # Year first by default, as in scene releases and Stash's own queries.
+        self.assertEqual(self.date_of("Site.23.04.15.Title"), ("2023-04-15", False))
+        self.assertEqual(self.date_of("yonitale.15.10.07.ariel"), ("2015-10-07", False))
+        # Another reading is used when year-first isn't a valid date.
+        self.assertEqual(self.date_of("Site.31.12.15.Title"), ("2015-12-31", False))
+        # "auto": 23.04.15 could be 2023-04-15 or 2015-04-23, different years.
+        self.assertEqual(self.date_of("Site.23.04.15.Title", two_digit_year_order="auto"), (None, True))
         # Only one valid reading (31 can't be a day-first/month-first year >= 1950).
-        self.assertEqual(self.date_of("Site.25.12.31.Title"), ("2025-12-31", False))
+        self.assertEqual(self.date_of("Site.25.12.31.Title", two_digit_year_order="auto"), ("2025-12-31", False))
 
     def test_month_names(self):
         self.assertEqual(self.date_of("15th April 2023"), ("2023-04-15", False))
@@ -299,7 +303,7 @@ class GenericScrapeTest(unittest.TestCase):
 
     def test_names_inside_the_title_are_kept(self):
         for name, title in [
-            ("Dinner with Alice Smith.mp4", "Dinner with Alice Smith"),
+            ("Dinner with Alice Smith.mp4", "Dinner With Alice Smith"),
             ("[Other Site] Carol's Big Day - Bob Jones.mp4", "Carol's Big Day"),
             ("Alice Smith Goes To Other Site.mp4", "Alice Smith Goes To Other Site"),
         ]:
@@ -313,8 +317,33 @@ class GenericScrapeTest(unittest.TestCase):
         result = scrape_path("/v/Pool Day - Alice Smith, Zed.mp4", LIBRARY)
         self.assertEqual(result["title"], "Pool Day - Alice Smith, Zed")
 
+    def test_studio_opening_the_title_is_removed(self):
+        library = Library([], [Entity("Underwater Show"), Entity("Other Site")], [])
+        result = scrape_path(
+            "/v/underwatershow.two.dressed.beauties.underwater.anna.netrebko.and.lada.poleshuk.1080p.mp4", library)
+        self.assertEqual(result["studio"], {"name": "Underwater Show"})
+        self.assertEqual(result["title"], "Two Dressed Beauties Underwater Anna Netrebko and Lada Poleshuk")
+        # Not at the end, where it's more likely part of the title...
+        self.assertEqual(scrape_path("/v/Alice Goes To Other Site.mp4", library)["title"], "Alice Goes To Other Site")
+        # ...and not when it's all there is.
+        self.assertEqual(scrape_path("/v/Underwater Show.mp4", library)["title"], "Underwater Show")
+
+    def test_titles_are_title_cased(self):
+        result = scrape_path("/v/yonitale.15.10.07.ariel.marion.y.take.my.breath.away.part.1.1080p.mp4", LIBRARY)
+        self.assertEqual(result["title"], "Yonitale Ariel Marion Y Take My Breath Away Part 1")
+        self.assertEqual(result["date"], "2015-10-07")
+        for text, cased in [
+            ("a tale of two cities: the end", "A Tale of Two Cities: The End"),
+            ("self-made iPhone vs. BBC in McKenzie's van", "Self-Made iPhone vs. BBC in McKenzie's Van"),
+            ("THE BIG ONE", "The Big One"),
+            ("part 2 of the x-files", "Part 2 of the X-Files"),
+        ]:
+            self.assertEqual(FilenameParser.title_case(text), cased)
+        result = scrape_path("/v/a quiet day.mp4", LIBRARY, {"title_case": "false"})
+        self.assertEqual(result["title"], "a quiet day")
+
     def test_joining_words_kept_at_title_edges(self):
-        for name in ("Playing With", "With Love", "Rock And", "Featuring", "Me vs"):
+        for name in ("Playing With", "With Love", "Rock And", "Featuring", "Me Vs"):
             self.assertEqual(scrape_path(f"/v/{name}.mp4", LIBRARY)["title"], name)
 
     def test_title_falls_back_when_only_names_remain(self):

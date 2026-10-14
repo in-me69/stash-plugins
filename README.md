@@ -72,13 +72,14 @@ Dates are read from the filename only, not from folder names. Supported formats:
 
 - `2023.04.15`, `2023-04-15`, `2023_4_15`, `20230415`
 - `15.04.2023` and `04.15.2023`, when only one reading is valid
+- `23.04.15`, a two-digit year first as in scene releases, read as 2023-04-15. Stash's own query builder reads them the same way. If that isn't a valid date, the other readings are tried.
 - `15th April 2023`, `Apr 15, 2023`
 - `April 2023` and `2023-04`, saved as year-month
 - `2023` or `(2023)`, saved as year only
 
 Stash supports year-only and year-month dates.
 
-**Ambiguous dates:** some dates can be read more than one way, for example `03.04.2023` (3 April or March 4). For these, the scraper keeps only the year and adds the tag **`Date Needs Review`**. You can then filter on that tag to fix dates by hand. If the possible readings don't share a year, no date is set and the tag is still added. This can happen with two-digit years like `23.04.15`.
+**Ambiguous dates:** some dates can be read more than one way, for example `03.04.2023` (3 April or March 4). For these, the scraper keeps only the year and adds the tag **`Date Needs Review`**. You can then filter on that tag to fix dates by hand. If the possible readings don't share a year, no date is set and the tag is still added. With `two_digit_year_order = auto`, this can happen with two-digit years like `23.04.15`.
 
 ### Title cleanup
 
@@ -103,11 +104,16 @@ A segment is dropped only if it contains nothing but matched performer or studio
 | `[Studio] Alice, Bob - Pool Day` | `Pool Day` |
 | `[Studio] Pool Day - Alice & Bob` | `Pool Day` |
 | `Pool Day (Alice Smith) 1080p` | `Pool Day` |
-| `Dinner with Alice Smith` | `Dinner with Alice Smith` |
+| `Dinner with Alice Smith` | `Dinner With Alice Smith` |
 | `Studio.2023.04.15.Alice.Smith.Pool.Day` | `Alice Smith Pool Day` (nothing separates the name from the title) |
+| `studio.pool.day.1080p` | `Pool Day` (the studio opens the title) |
 | `Pool Day - Alice, Zed` (Zed not in Stash) | `Pool Day - Alice, Zed` |
 
+A studio name that opens the title is removed too, as a site name does in a release name: `underwatershow.two.dressed.beauties` becomes `Two Dressed Beauties`. A studio name elsewhere in the title is kept.
+
 Performers and studios are still returned whether or not their names were removed from the title.
+
+**Title Case:** the title is then put in Title Case. Words written all in lowercase are capitalised, except small words like `and`, `of` or `the` in mid-title. Words with capitals of their own, like `McKenzie`, `BBC` or `iPhone`, are left alone, unless the whole title is in capitals. Set `title_case = false` to keep the filename's own case. Titles from series-dated filenames (below) are kept exactly as written.
 
 Tag names are never removed from the title, because words like "Beach" are often part of the real title.
 
@@ -166,7 +172,8 @@ The scraper needs to reach Stash's GraphQL API to read your performers, studios 
 | `api_key` | detected (see above), else empty | Stash API key. Can be overridden by the `STASH_API_KEY` environment variable. |
 | `review_tag` | `Date Needs Review` | Tag added to scenes with ambiguous dates. Leave empty to disable it. |
 | `performer_review_tag` | `Performer Needs Review` | Tag added when text in the path is an alias of several performers and none of them can be picked. Leave empty to disable it. |
-| `two_digit_year_order` | `auto` | `auto` treats dates like `23.04.15` as ambiguous. `ymd` always reads them as YY.MM.DD. |
+| `two_digit_year_order` | `ymd` | `ymd` reads dates like `23.04.15` as YY.MM.DD, unless that isn't a valid date. `auto` treats them as ambiguous. |
+| `title_case` | `true` | Put titles in Title Case. `false` keeps the filename's own case. |
 | `match_performer_aliases` | `true` | Also match performers by alias. `false` matches primary names only, like Auto Tag. |
 | `match_scope` | `path` | `path` matches across the full path, like Auto Tag. `filename` ignores folder names. |
 | `cache_ttl_seconds` | `300` | How long, in seconds, to cache the library lists. `0` turns the cache off. |
