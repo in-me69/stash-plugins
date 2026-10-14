@@ -44,6 +44,10 @@ To see what changed since the version you have installed, compare it with the en
 
 ## Scene Reset (plugin)
 
+### 0.3.1 — 2026-10-14
+- Fixed every reset failing with "HTTP Error 422: Unprocessable Entity". The reset cleared `production_date`, which no Stash release has yet. Fields your Stash version doesn't have are now left out.
+- A failed request logs Stash's reason instead of just the HTTP status.
+
 ### 0.3.0 — 2026-10-12 (#11)
 - **Reset metadata…** is also in the **…** menu on each scene's own page.
 
